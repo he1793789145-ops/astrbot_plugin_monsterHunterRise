@@ -2,7 +2,7 @@ name: astrbot_plugin_monsterHunterRise
 display_name: 怪物猎人素材查询
 desc: 群消息查询《怪物猎人 崛起：曙光》素材的获取方式，返回怪物、部位/方式、概率、数量、地图与可刷任务，以图片卡片呈现。
 version: 1.0.0
-author: user
+author: UltimateSpiderX
 repo: ""
 astrbot_version: ">=4.0.0"
 support_platforms:
