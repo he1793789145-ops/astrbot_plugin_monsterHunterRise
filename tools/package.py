@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """把插件打成可分发压缩包。
 
 排除自测产物与 __pycache__；快照会一并打进包里，所以对方开箱即用，
@@ -61,7 +60,9 @@ def build(out_path: Path) -> int:
         return 2
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    with zipfile.ZipFile(
+        out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as archive:
         for path in files:
             # 压缩包内保留顶层目录，解压后直接就是插件目录
             arcname = f"{PLUGIN_NAME}/{path.relative_to(PLUGIN_ROOT).as_posix()}"

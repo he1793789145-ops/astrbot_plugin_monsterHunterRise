@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """从 mhrise.kiranico.com 抓取素材的采集点（目的地）数据，并入快照。
 
 用法::
@@ -159,7 +158,9 @@ def probe(names: list[str]) -> int:
         print(f"[{name}] {url}")
         if points:
             for point in points[:6]:
-                print(f"    {point['map']}  {point['rank']}  {point['quantity']}  {point['chance']}")
+                print(
+                    f"    {point['map']}  {point['rank']}  {point['quantity']}  {point['chance']}"
+                )
             if len(points) > 6:
                 print(f"    ...共 {len(points)} 条")
         else:
@@ -195,7 +196,9 @@ def crawl(listing: dict, limit: int | None = None) -> tuple[dict, list]:
                 if points:
                     gathered[name] = points
             if done % 50 == 0 or done == len(targets):
-                print(f"  进度 {done}/{len(targets)}，已有采集点 {len(gathered)} 个，失败 {len(failures)}")
+                print(
+                    f"  进度 {done}/{len(targets)}，已有采集点 {len(gathered)} 个，失败 {len(failures)}"
+                )
     return gathered, failures
 
 
@@ -207,13 +210,20 @@ def _fetch_one(name: str, url: str) -> list:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="抓取 Kiranico 采集点数据")
     parser.add_argument("--probe", action="store_true", help="只探测几个素材，验证结构")
-    parser.add_argument("--probe-names", nargs="*",
-                        default=["温暖的毛皮", "蜂蜜", "大地结晶", "炸药"],
-                        help="探测用的素材名")
+    parser.add_argument(
+        "--probe-names",
+        nargs="*",
+        default=["温暖的毛皮", "蜂蜜", "大地结晶", "炸药"],
+        help="探测用的素材名",
+    )
     parser.add_argument("--out", type=Path, help="快照路径（抓取结果合并进去）")
     parser.add_argument("--limit", type=int, help="只抓前 N 个（调试用）")
-    parser.add_argument("--cache", type=Path, default=Path("gathering_cache.json"),
-                        help="原始抓取结果缓存，便于重跑不重复抓")
+    parser.add_argument(
+        "--cache",
+        type=Path,
+        default=Path("gathering_cache.json"),
+        help="原始抓取结果缓存，便于重跑不重复抓",
+    )
     args = parser.parse_args(argv)
 
     if args.probe:
@@ -260,7 +270,8 @@ def main(argv=None) -> int:
         "该站点未声明许可证，仅提取事实性字段"
     )
     args.out.write_text(
-        json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
     )
     print(f"已把 {matched} 个素材的采集点写入快照 {args.out}")
     return 0

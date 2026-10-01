@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """卡片渲染。
 
 默认走 PIL 自绘，不依赖 AstrBot 的文转图服务（这台机器上 t2i 是关闭的）。
@@ -37,11 +36,11 @@ COLORS = {
     "title": (238, 240, 244),
     "text": (200, 205, 214),
     "muted": (140, 147, 158),
-    "accent": (232, 176, 74),      # 金色：稀有素材
+    "accent": (232, 176, 74),  # 金色：稀有素材
     "accent_dim": (150, 116, 56),
-    "rank": (110, 190, 230),       # 蓝色：难度
-    "chance": (140, 210, 140),     # 绿色：概率
-    "event": (230, 140, 170),      # 粉色：活动任务
+    "rank": (110, 190, 230),  # 蓝色：难度
+    "chance": (140, 210, 140),  # 绿色：概率
+    "event": (230, 140, 170),  # 粉色：活动任务
 }
 
 
@@ -77,7 +76,7 @@ class Line:
     segments: list[tuple[str, str]] = field(default_factory=list)
 
     @staticmethod
-    def of(*segments: tuple[str, str]) -> "Line":
+    def of(*segments: tuple[str, str]) -> Line:
         return Line(segments=list(segments))
 
 
@@ -183,10 +182,17 @@ class CardRenderer:
 
         cursor = PADDING
         # 标题
-        draw.text((PADDING, cursor), card.title, font=self.f_title, fill=COLORS["title"])
+        draw.text(
+            (PADDING, cursor), card.title, font=self.f_title, fill=COLORS["title"]
+        )
         cursor += FONT_TITLE + 10
         if card.subtitle:
-            draw.text((PADDING, cursor), card.subtitle, font=self.f_subtitle, fill=COLORS["muted"])
+            draw.text(
+                (PADDING, cursor),
+                card.subtitle,
+                font=self.f_subtitle,
+                fill=COLORS["muted"],
+            )
             cursor += FONT_SUBTITLE + 14
 
         cursor += 12
@@ -194,27 +200,44 @@ class CardRenderer:
             cursor = self._draw_section(draw, section, cursor, index)
 
         if card.footnote:
-            draw.text((PADDING, cursor + 4), card.footnote, font=self.f_small, fill=COLORS["muted"])
+            draw.text(
+                (PADDING, cursor + 4),
+                card.footnote,
+                font=self.f_small,
+                fill=COLORS["muted"],
+            )
 
         out_dir = Path(tempfile.gettempdir()) / "mh_material_cards"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"card_{abs(hash((card.title, card.subtitle, len(card.sections))))}.png"
+        out_path = (
+            out_dir
+            / f"card_{abs(hash((card.title, card.subtitle, len(card.sections))))}.png"
+        )
         image.save(out_path, "PNG")
         return str(out_path)
 
-    def _draw_section(self, draw: ImageDraw.ImageDraw, section: Section, top: int, index: int) -> int:
+    def _draw_section(
+        self, draw: ImageDraw.ImageDraw, section: Section, top: int, index: int
+    ) -> int:
         # 分区背景
         block_top = top - 8
         block_height = FONT_SECTION + 12
         for line in section.lines:
             block_height += self._line_height(line) + LINE_GAP
         if section.footer:
-            block_height += self._line_height(Line.of((section.footer, "muted"))) + LINE_GAP
+            block_height += (
+                self._line_height(Line.of((section.footer, "muted"))) + LINE_GAP
+            )
         block_height += 10
 
         bg = COLORS["panel_alt"] if index % 2 else COLORS["panel"]
         draw.rounded_rectangle(
-            (PADDING - 12, block_top, self.width - PADDING + 12, block_top + block_height),
+            (
+                PADDING - 12,
+                block_top,
+                self.width - PADDING + 12,
+                block_top + block_height,
+            ),
             radius=10,
             fill=bg,
             outline=COLORS["border"],
@@ -223,7 +246,9 @@ class CardRenderer:
 
         cursor = top
         title_color = COLORS["accent"] if section.highlight else COLORS["title"]
-        draw.text((PADDING, cursor), section.title, font=self.f_section, fill=title_color)
+        draw.text(
+            (PADDING, cursor), section.title, font=self.f_section, fill=title_color
+        )
         cursor += FONT_SECTION + 12
 
         for line in section.lines:
@@ -236,7 +261,12 @@ class CardRenderer:
             cursor += self._line_height(line) + LINE_GAP
 
         if section.footer:
-            draw.text((PADDING, cursor), section.footer, font=self.f_small, fill=COLORS["muted"])
+            draw.text(
+                (PADDING, cursor),
+                section.footer,
+                font=self.f_small,
+                fill=COLORS["muted"],
+            )
             cursor += self._line_height(Line.of((section.footer, "muted"))) + LINE_GAP
 
         return cursor + SECTION_GAP
@@ -262,7 +292,11 @@ def render_html(card: Card) -> str | None:
             for text, style in line.segments:
                 parts.append(f'<span class="{style}">{html_mod.escape(text)}</span>')
             lines.append("<div class='line'>" + "".join(parts) + "</div>")
-        footer = f"<div class='footer'>{html_mod.escape(section.footer)}</div>" if section.footer else ""
+        footer = (
+            f"<div class='footer'>{html_mod.escape(section.footer)}</div>"
+            if section.footer
+            else ""
+        )
         cls = "section highlight" if section.highlight else "section"
         rows.append(
             f"<div class='{cls}'><div class='stitle'>{html_mod.escape(section.title)}</div>"
@@ -271,8 +305,16 @@ def render_html(card: Card) -> str | None:
             + "</div>"
         )
 
-    subtitle = f"<div class='subtitle'>{html_mod.escape(card.subtitle)}</div>" if card.subtitle else ""
-    footnote = f"<div class='footnote'>{html_mod.escape(card.footnote)}</div>" if card.footnote else ""
+    subtitle = (
+        f"<div class='subtitle'>{html_mod.escape(card.subtitle)}</div>"
+        if card.subtitle
+        else ""
+    )
+    footnote = (
+        f"<div class='footnote'>{html_mod.escape(card.footnote)}</div>"
+        if card.footnote
+        else ""
+    )
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 body {{ background:#181a1e; color:#c8cdd6; font-family:"Microsoft YaHei",sans-serif;
        width:820px; margin:0; padding:28px; }}

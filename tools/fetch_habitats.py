@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """补全怪物（尤其小动物）的栖息地图，来源 gamecat.fun。
 
 ## 为什么需要这个
@@ -52,7 +51,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 TIMEOUT = 30
-BATCH = 50          # MediaWiki 单次 titles 上限
+BATCH = 50  # MediaWiki 单次 titles 上限
 REQUEST_DELAY = 0.6  # 请求间隔，避免给对方压力
 
 # `'''出现场地：'''` 后面那一行里，[[场地/XX|YY]] 的 XX
@@ -94,7 +93,7 @@ def list_monster_pages() -> list[str]:
     for member in (data.get("query") or {}).get("categorymembers") or []:
         title = member.get("title") or ""
         if title.startswith(PAGE_PREFIX):
-            titles.append(title[len(PAGE_PREFIX):])
+            titles.append(title[len(PAGE_PREFIX) :])
     return [t for t in titles if "/" not in t]
 
 
@@ -102,7 +101,7 @@ def fetch_habitats(names: list[str]) -> dict:
     """批量取栖息地图，返回 {怪物名: [地图名, ...]}。"""
     habitats: dict[str, list[str]] = {}
     for start in range(0, len(names), BATCH):
-        chunk = names[start:start + BATCH]
+        chunk = names[start : start + BATCH]
         titles = "|".join(PAGE_PREFIX + name for name in chunk)
         try:
             data = fetch(
@@ -122,13 +121,15 @@ def fetch_habitats(names: list[str]) -> dict:
             time.sleep(REQUEST_DELAY)
             continue
 
-        for page in ((data.get("query") or {}).get("pages") or []):
-            title = (page.get("title") or "")
-            name = title[len(PAGE_PREFIX):] if title.startswith(PAGE_PREFIX) else title
+        for page in (data.get("query") or {}).get("pages") or []:
+            title = page.get("title") or ""
+            name = title.removeprefix(PAGE_PREFIX)
             revisions = page.get("revisions") or []
             if not revisions:
                 continue
-            content = ((revisions[0].get("slots") or {}).get("main") or {}).get("content") or ""
+            content = ((revisions[0].get("slots") or {}).get("main") or {}).get(
+                "content"
+            ) or ""
             match = HABITAT_FIELD.search(content)
             if not match:
                 continue
@@ -140,7 +141,9 @@ def fetch_habitats(names: list[str]) -> dict:
                     seen.append(item)
             if seen:
                 habitats[name] = seen
-        print(f"  已处理 {min(start + BATCH, len(names))}/{len(names)}，累计 {len(habitats)} 只有地图")
+        print(
+            f"  已处理 {min(start + BATCH, len(names))}/{len(names)}，累计 {len(habitats)} 只有地图"
+        )
         time.sleep(REQUEST_DELAY)
     return habitats
 
@@ -164,8 +167,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="从 gamecat.fun 补全怪物栖息地图")
     parser.add_argument("--probe", action="store_true", help="只验证解析，不写快照")
     parser.add_argument("--out", type=Path, help="快照路径，结果合并进去")
-    parser.add_argument("--cache", type=Path, default=Path("habitat_cache.json"),
-                        help="原始抓取结果缓存")
+    parser.add_argument(
+        "--cache",
+        type=Path,
+        default=Path("habitat_cache.json"),
+        help="原始抓取结果缓存",
+    )
     args = parser.parse_args(argv)
 
     if args.probe:
@@ -210,7 +217,8 @@ def main(argv=None) -> int:
         "该站未声明许可证，仅提取「怪物→地图」事实映射"
     )
     args.out.write_text(
-        json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
     )
     print(f"已为 {matched} 只怪物写入栖息地图 -> {args.out}")
     return 0

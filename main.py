@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """怪物猎人素材查询插件（AstrBot · OneBot v11）。
 
 指令：
@@ -142,7 +141,7 @@ def extract_argument(message: str) -> str:
 
     # 去掉可能残留的唤醒前缀
     while text.startswith(WAKE_PREFIX):
-        text = text[len(WAKE_PREFIX):].lstrip()
+        text = text[len(WAKE_PREFIX) :].lstrip()
     if not text:
         return ""
 
@@ -151,7 +150,7 @@ def extract_argument(message: str) -> str:
     if lowered == token:
         return ""
     if lowered.startswith(token + " "):
-        return text[len(token):].strip()
+        return text[len(token) :].strip()
     # 不是本指令（理论上不会走到，防御性返回原文，交由 dispatch 报未知子命令）
     return text
 
