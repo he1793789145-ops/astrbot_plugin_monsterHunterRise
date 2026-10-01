@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """验证与 AstrBot 的指令参数解析是否兼容（回归测试）。
 
 背景：AstrBot 的 ``CommandFilter.init_handler_md`` 用 ``inspect.signature`` 直接读函数注解，
@@ -88,9 +87,13 @@ def install_stubs() -> None:
     core.logger = _Any()
     core.AstrBotConfig = _Any
 
-    for name in ("astrbot.core.agent", "astrbot.core.agent.agent",
-                 "astrbot.core.agent.handoff", "astrbot.core.agent.hooks",
-                 "astrbot.core.agent.tool"):
+    for name in (
+        "astrbot.core.agent",
+        "astrbot.core.agent.agent",
+        "astrbot.core.agent.handoff",
+        "astrbot.core.agent.hooks",
+        "astrbot.core.agent.tool",
+    ):
         mod = make_module(name)
         mod.Agent = _Any
         mod.HandoffTool = _Any
@@ -121,8 +124,16 @@ def install_stubs() -> None:
         AdapterMessageEvent = "AdapterMessageEvent"
 
     class StarHandlerMetadata:
-        def __init__(self, event_type=None, handler_full_name="", handler_name="",
-                     handler_module_path="", handler=None, event_filters=None, **kwargs):
+        def __init__(
+            self,
+            event_type=None,
+            handler_full_name="",
+            handler_name="",
+            handler_module_path="",
+            handler=None,
+            event_filters=None,
+            **kwargs,
+        ):
             self.event_type = event_type
             self.handler_full_name = handler_full_name
             self.handler_name = handler_name
@@ -136,7 +147,7 @@ def install_stubs() -> None:
     sh.StarHandlerMetadata = StarHandlerMetadata
     sh.star_handlers_registry = _Registry()
 
-    star = make_module("astrbot.core.star")
+    make_module("astrbot.core.star")
     make_module("astrbot.core.star.star").star_map = {}
     make_module("astrbot.core.star.star").StarMetadata = _Any
 
@@ -160,13 +171,16 @@ def install_stubs() -> None:
         def command(self, *a, **k):
             def deco(fn):
                 return fn
+
             return deco
 
         def __getattr__(self, item):
             def deco(*a, **k):
                 def inner(fn):
                     return fn
+
                 return inner
+
             return deco
 
     api_event = make_module("astrbot.api.event")
@@ -215,9 +229,12 @@ class FakeEvent:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="验证与 AstrBot 的指令参数解析兼容性")
-    parser.add_argument("--astrbot-dir", type=Path,
-                        default=Path(r"D:\梦汐QQ机器人\AstrBot\AstrBot"),
-                        help="AstrBot 源码目录（含 astrbot/ 子目录）")
+    parser.add_argument(
+        "--astrbot-dir",
+        type=Path,
+        default=Path(r"D:\梦汐QQ机器人\AstrBot\AstrBot"),
+        help="AstrBot 源码目录（含 astrbot/ 子目录）",
+    )
     args = parser.parse_args(argv)
 
     astrbot = args.astrbot_dir / "astrbot"
@@ -234,30 +251,49 @@ def main(argv=None) -> int:
         return 0
 
     install_stubs()
-    load_real("astrbot.core.star.filter.custom_filter",
-              astrbot / "core" / "star" / "filter" / "custom_filter.py")
+    load_real(
+        "astrbot.core.star.filter.custom_filter",
+        astrbot / "core" / "star" / "filter" / "custom_filter.py",
+    )
 
-    for extra in ("command_group", "event_message_type", "permission",
-                  "platform_adapter_type", "regex"):
+    for extra in (
+        "command_group",
+        "event_message_type",
+        "permission",
+        "platform_adapter_type",
+        "regex",
+    ):
         mod = make_module(f"astrbot.core.star.filter.{extra}")
-        for attr in ("CommandGroupFilter", "EventMessageType", "EventMessageTypeFilter",
-                     "PermissionType", "PermissionTypeFilter", "PlatformAdapterType",
-                     "PlatformAdapterTypeFilter", "RegexFilter"):
+        for attr in (
+            "CommandGroupFilter",
+            "EventMessageType",
+            "EventMessageTypeFilter",
+            "PermissionType",
+            "PermissionTypeFilter",
+            "PlatformAdapterType",
+            "PlatformAdapterTypeFilter",
+            "RegexFilter",
+        ):
             setattr(mod, attr, _Any)
     cf = sys.modules["astrbot.core.star.filter.custom_filter"]
     cf.CustomFilterAnd = _Any
     cf.CustomFilterOr = _Any
 
-    command_mod = load_real("astrbot.core.star.filter.command",
-                            astrbot / "core" / "star" / "filter" / "command.py")
-    register_mod = load_real("astrbot.core.star.register.star_handler",
-                             astrbot / "core" / "star" / "register" / "star_handler.py")
+    command_mod = load_real(
+        "astrbot.core.star.filter.command",
+        astrbot / "core" / "star" / "filter" / "command.py",
+    )
+    register_mod = load_real(
+        "astrbot.core.star.register.star_handler",
+        astrbot / "core" / "star" / "register" / "star_handler.py",
+    )
 
     # 导入插件
     pkg = make_module(PLUGIN_NAME)
     pkg.__path__ = [str(PLUGIN_ROOT)]
     spec = importlib.util.spec_from_file_location(
-        f"{PLUGIN_NAME}.main", PLUGIN_ROOT / "main.py")
+        f"{PLUGIN_NAME}.main", PLUGIN_ROOT / "main.py"
+    )
     main_mod = importlib.util.module_from_spec(spec)
     main_mod.__package__ = PLUGIN_NAME
     sys.modules[f"{PLUGIN_NAME}.main"] = main_mod
@@ -267,7 +303,8 @@ def main(argv=None) -> int:
     print("handler 签名：", inspect.signature(handler))
 
     md = register_mod.get_handler_or_create(
-        handler, register_mod.EventType.AdapterMessageEvent)
+        handler, register_mod.EventType.AdapterMessageEvent
+    )
     cmd_filter = command_mod.CommandFilter("mh", None, None)
     cmd_filter.init_handler_md(md)
 
@@ -300,7 +337,9 @@ def main(argv=None) -> int:
     for message, expected in cases.items():
         got = main_mod.extract_argument(message)
         if got != expected:
-            print(f"  [失败] extract_argument({message!r}) = {got!r}，期望 {expected!r}")
+            print(
+                f"  [失败] extract_argument({message!r}) = {got!r}，期望 {expected!r}"
+            )
             failures += 1
     if failures == 0:
         print(f"  [通过] extract_argument 全部 {len(cases)} 个用例")
@@ -314,7 +353,9 @@ def main(argv=None) -> int:
     for message in ("/mh 素材 妖辉石", "/mh 怪物 爵银龙", "/mh help"):
         argument = main_mod.extract_argument(message)
         result = commands.dispatch(snapshot, argument)
-        title = result.card.title if result.card else (result.text or "").splitlines()[0]
+        title = (
+            result.card.title if result.card else (result.text or "").splitlines()[0]
+        )
         print(f"  [通过] {message!r} -> {title}")
 
     print()

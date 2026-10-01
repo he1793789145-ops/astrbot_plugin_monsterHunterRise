@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """离线自测：直接跑数据层与渲染层，不需要 AstrBot 运行时。
 
 用法::
@@ -23,7 +22,7 @@ PLUGIN_NAME = PLUGIN_ROOT.name
 # 然后用包名 import，而不是把插件目录本身加进 sys.path。
 sys.path.insert(0, str(PLUGIN_ROOT.parent))
 
-from importlib import import_module  # noqa: E402
+from importlib import import_module
 
 _pkg = import_module(PLUGIN_NAME)
 cmd = import_module(f"{PLUGIN_NAME}.commands")
@@ -37,12 +36,12 @@ QUERIES = [
     ("素材", "龙玉"),
     ("素材", "火龙的天鳞"),
     ("素材", "蜂蜜"),
-    ("素材", "大地结晶"),      # 采集类素材：应有「采集点」小节
-    ("素材", "妖辉石"),        # 仅任务报酬 + 采集点
-    ("素材", "温暖的毛皮"),    # 小动物掉落：应标出精灵鹿/雪鹿与出现地图
+    ("素材", "大地结晶"),  # 采集类素材：应有「采集点」小节
+    ("素材", "妖辉石"),  # 仅任务报酬 + 采集点
+    ("素材", "温暖的毛皮"),  # 小动物掉落：应标出精灵鹿/雪鹿与出现地图
     ("怪物", "爵银龙"),
     ("怪物", "爆鳞龙"),
-    ("怪物", "精灵鹿"),        # 小动物：应有「出现地图」小节
+    ("怪物", "精灵鹿"),  # 小动物：应有「出现地图」小节
     ("怪物", "野猪"),
     ("任务", "撕裂寂静者"),
     ("help", ""),
@@ -65,7 +64,9 @@ def main(argv=None) -> int:
         return 2
 
     stats = snapshot.stats()
-    print(f"快照：{stats['materials']} 素材 / {stats['monsters']} 怪物 / {stats['quests']} 任务")
+    print(
+        f"快照：{stats['materials']} 素材 / {stats['monsters']} 怪物 / {stats['quests']} 任务"
+    )
     print(f"生成时间：{snapshot.generated_at}\n")
 
     failures = 0
@@ -98,7 +99,9 @@ def main(argv=None) -> int:
                 kind, payload = _render.render_card(result.card)
                 out_dir = args.out
                 out_dir.mkdir(parents=True, exist_ok=True)
-                safe = f"{name}_{argument or 'none'}".replace("/", "_").replace("\\", "_")
+                safe = f"{name}_{argument or 'none'}".replace("/", "_").replace(
+                    "\\", "_"
+                )
                 if kind == "image":
                     target = out_dir / f"{safe}.png"
                     target.write_bytes(Path(payload).read_bytes())

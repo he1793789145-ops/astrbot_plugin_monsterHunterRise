@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """把 mhrice 源数据提取成插件用的紧凑快照。
 
 用法::
@@ -78,16 +77,35 @@ PARTS_GROUP_SIZE = 20
 # 取自 `monsters[].collider_mapping.part_map` 的实际用词，只翻译常见部位；
 # 未收录的词直接保留原文，避免误译成错误的部位。
 PART_NAME_ZH = {
-    "頭部": "头部", "頭": "头部", "首": "颈部", "胴体": "躯干", "胴": "躯干",
-    "腹部": "腹部", "お腹": "腹部", "背中": "背部",
-    "翼": "翼", "左翼": "左翼", "右翼": "右翼",
-    "尻尾": "尾巴", "尾": "尾巴",
-    "左脚": "左脚", "右脚": "右脚",
-    "左前脚": "左前脚", "右前脚": "右前脚", "前脚": "前脚",
-    "左後脚": "左后脚", "右後脚": "右后脚", "後脚": "后脚",
-    "左腕": "左腕", "右腕": "右腕", "腕": "腕",
-    "脚": "脚", "翼脚": "翼脚", "翼脚_右": "右翼脚",
-    "角": "角", "牙": "牙",
+    "頭部": "头部",
+    "頭": "头部",
+    "首": "颈部",
+    "胴体": "躯干",
+    "胴": "躯干",
+    "腹部": "腹部",
+    "お腹": "腹部",
+    "背中": "背部",
+    "翼": "翼",
+    "左翼": "左翼",
+    "右翼": "右翼",
+    "尻尾": "尾巴",
+    "尾": "尾巴",
+    "左脚": "左脚",
+    "右脚": "右脚",
+    "左前脚": "左前脚",
+    "右前脚": "右前脚",
+    "前脚": "前脚",
+    "左後脚": "左后脚",
+    "右後脚": "右后脚",
+    "後脚": "后脚",
+    "左腕": "左腕",
+    "右腕": "右腕",
+    "腕": "腕",
+    "脚": "脚",
+    "翼脚": "翼脚",
+    "翼脚_右": "右翼脚",
+    "角": "角",
+    "牙": "牙",
 }
 
 # map_no -> 地图名。Stage_Name_01.._11 实测取自 map_name 表；
@@ -215,11 +233,46 @@ def build_item_names(mhrice: dict) -> dict:
 # 试过的 et-73 / et-6 / 直接索引都会有 5~8 只错位。大师表只有 40 项，
 # 且全部来自 monster_names_mr，逐条列举比猜公式可靠。
 MR_INDEX_BY_ENEMY_TYPE = {
-    76: 3, 77: 4, 78: 5, 79: 6, 80: 7, 81: 8, 82: 9, 83: 10, 84: 11, 85: 12,
-    86: 13, 87: 14, 88: 15, 89: 16, 90: 17, 91: 18, 92: 19, 93: 20, 94: 21,
-    95: 22, 96: 23, 97: 24, 98: 25, 99: 26, 100: 27, 101: 28, 102: 29,
-    103: 30, 104: 31, 105: 32, 106: 33, 107: 31, 108: 34, 109: 33, 110: 37,
-    111: 35, 112: 39, 113: 34, 114: 36, 115: 38,
+    76: 3,
+    77: 4,
+    78: 5,
+    79: 6,
+    80: 7,
+    81: 8,
+    82: 9,
+    83: 10,
+    84: 11,
+    85: 12,
+    86: 13,
+    87: 14,
+    88: 15,
+    89: 16,
+    90: 17,
+    91: 18,
+    92: 19,
+    93: 20,
+    94: 21,
+    95: 22,
+    96: 23,
+    97: 24,
+    98: 25,
+    99: 26,
+    100: 27,
+    101: 28,
+    102: 29,
+    103: 30,
+    104: 31,
+    105: 32,
+    106: 33,
+    107: 31,
+    108: 34,
+    109: 33,
+    110: 37,
+    111: 35,
+    112: 39,
+    113: 34,
+    114: 36,
+    115: 38,
 }
 
 # 源数据无法区分、需人工指定的条目：这些 em 的掉落物名与基础种相同，
@@ -392,8 +445,7 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
         if not isinstance(em, int) or em <= 0:
             continue
 
-        name = (EM_NAME_OVERRIDES.get(em)
-                or resolve_name(em, raw.get("enemy_type")))
+        name = EM_NAME_OVERRIDES.get(em) or resolve_name(em, raw.get("enemy_type"))
 
         # 别名表与名字表同序，按下标取（基础表 + 大师表）
         alias = ""
@@ -422,7 +474,12 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
         if not isinstance(ems, int) or ems <= 0:
             continue
         # 小动物名以核对表为准；表外的用掉落签名兜底
-        name = SMALL_NAME_OVERRIDES.get(ems) or signature(ems) or weak_signature(ems) or f"小怪{ems}"
+        name = (
+            SMALL_NAME_OVERRIDES.get(ems)
+            or signature(ems)
+            or weak_signature(ems)
+            or f"小怪{ems}"
+        )
         info = {"name": name, "kind": "small"}
         habitats = decode_habitat(raw, mhrice, small=True)
         if habitats:
@@ -589,8 +646,15 @@ def build_part_names(mhrice: dict) -> dict:
 
 # 内部标记：不是真正的部位名，显示出来会让用户困惑
 _INTERNAL_PART_MARKERS = (
-    "ダメージアタリ", "ダメージ部位", "damage", "Damage", "Group",
-    "シェル弾き", "EmHitDamage", "アタリ", "部位分け",
+    "ダメージアタリ",
+    "ダメージ部位",
+    "damage",
+    "Damage",
+    "Group",
+    "シェル弾き",
+    "EmHitDamage",
+    "アタリ",
+    "部位分け",
 )
 
 
@@ -601,9 +665,7 @@ def is_internal_part_label(name: str) -> bool:
     if any(marker in name for marker in _INTERNAL_PART_MARKERS):
         return True
     # 纯数字/编号（例如 part_map 值为「10」「1」「5」）不是部位名
-    if name.isdigit():
-        return True
-    return False
+    return bool(name.isdigit())
 
 
 def part_group_map(random_ids: list, probabilities: list) -> list[str]:
@@ -660,7 +722,9 @@ def part_group_map(random_ids: list, probabilities: list) -> list[str]:
     return best_slice
 
 
-def build_drops(mhrice: dict, items: dict, part_names: dict | None = None) -> tuple[dict, dict]:
+def build_drops(
+    mhrice: dict, items: dict, part_names: dict | None = None
+) -> tuple[dict, dict]:
     """返回 (素材 -> 来源列表, 怪物em -> 掉落列表)。
 
     两个方向都建，是因为插件既要支持「素材->哪只怪掉」，
@@ -694,7 +758,11 @@ def build_drops(mhrice: dict, items: dict, part_names: dict | None = None) -> tu
             num_list = row.get(f"{kind}_num_list") or []
             prob_list = row.get(f"{kind}_probability_list") or []
             # 部位破坏带部位枚举，一并存下，免得以后要用还得重跑
-            part_list = row.get("parts_break_reward_type_list") if kind == "parts_break_reward" else None
+            part_list = (
+                row.get("parts_break_reward_type_list")
+                if kind == "parts_break_reward"
+                else None
+            )
 
             for index in range(len(id_list)):
                 item_id = _item_id_at(id_list, index)
@@ -719,7 +787,11 @@ def build_drops(mhrice: dict, items: dict, part_names: dict | None = None) -> tu
                 if part_list and index < len(part_list):
                     record["part"] = part_list[index]
                 # 部位破坏：按判定出的分组映射取名
-                if kind == "parts_break_reward" and break_parts and index < len(group_of_index):
+                if (
+                    kind == "parts_break_reward"
+                    and break_parts
+                    and index < len(group_of_index)
+                ):
                     group_index = group_of_index[index]
                     if group_index < len(break_parts) and break_parts[group_index]:
                         record["part_name"] = break_parts[group_index]
@@ -749,10 +821,7 @@ def build_map_names(mhrice: dict) -> tuple[dict, dict]:
             if is_rejected(text) or not text:
                 continue
             # Stage_Name_01.._11 对应 map_no 1..11；_3x/_4x 是大师图，单独映射
-            if number <= 11:
-                names[number] = text
-                origin[number] = "source"
-            elif number in MAP_NAMES_MR:
+            if number <= 11 or number in MAP_NAMES_MR:
                 names[number] = text
                 origin[number] = "source"
 
@@ -844,7 +913,9 @@ def build_quest_rewards(mhrice: dict, items: dict) -> dict:
                             "item_id": item_id,
                             "name": item["name"],
                             "rarity": item["rarity"],
-                            "quantity": int(num_list[index] or 0) if index < len(num_list) else 0,
+                            "quantity": int(num_list[index] or 0)
+                            if index < len(num_list)
+                            else 0,
                             "chance": float(chance),
                         }
                     )
@@ -869,7 +940,9 @@ def build_quests(mhrice: dict, monsters: dict, maps: dict, rewards: dict) -> lis
             quest_no = row.get("quest_no")
             if not isinstance(quest_no, int):
                 continue
-            quest_types = [t for t in (row.get("quest_type") or []) if t and t != "None"]
+            quest_types = [
+                t for t in (row.get("quest_type") or []) if t and t != "None"
+            ]
             type_label = "/".join(QUEST_TYPE_LABELS.get(t, t) for t in quest_types)
 
             map_no = row.get("map_no")
@@ -893,12 +966,16 @@ def build_quests(mhrice: dict, monsters: dict, maps: dict, rewards: dict) -> lis
             quests.append(
                 {
                     "quest_no": quest_no,
-                    "name": quest_names.get(quest_no, row.get("dbg_name") or f"任务{quest_no}"),
+                    "name": quest_names.get(
+                        quest_no, row.get("dbg_name") or f"任务{quest_no}"
+                    ),
                     "has_zh_name": quest_no in quest_names,
                     "level": row.get("quest_level") or "",
                     "level_num": _quest_level_num(row.get("quest_level")),
                     "enemy_level": row.get("enemy_level") or "",
-                    "enemy_level_label": RANK_LABELS.get(row.get("enemy_level"), row.get("enemy_level") or ""),
+                    "enemy_level_label": RANK_LABELS.get(
+                        row.get("enemy_level"), row.get("enemy_level") or ""
+                    ),
                     "map_no": map_no,
                     "map": maps.get(map_no, "") if isinstance(map_no, int) else "",
                     "type": type_label,
@@ -940,7 +1017,9 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
     print(f"  怪物: {len(monsters)} 只大型 + {len(small_monsters)} 只小动物")
 
     maps, map_origin = build_map_names(mhrice)
-    print(f"  地图: {len(maps)}（其中 {sum(1 for v in map_origin.values() if v == 'inferred')} 个为推断）")
+    print(
+        f"  地图: {len(maps)}（其中 {sum(1 for v in map_origin.values() if v == 'inferred')} 个为推断）"
+    )
 
     part_names = build_part_names(mhrice)
     print(f"  部位名表: {len(part_names)} 只怪物")
@@ -998,8 +1077,10 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
             "type": item["type"],
             "sources": entries,
         }
-    print(f"  快照内素材: {len(items_out)}"
-          f"（其中 {no_source} 个没有掉落来源，属采集/特殊获取）")
+    print(
+        f"  快照内素材: {len(items_out)}"
+        f"（其中 {no_source} 个没有掉落来源，属采集/特殊获取）"
+    )
 
     # 怪物只保留有掉落的，其余是环境生物
     monsters_out = {}
@@ -1018,7 +1099,9 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
             continue
         entry = {**info, "drops": drops}
         # 地图名一并给出，卡片可直接显示「出现在哪些地图」
-        entry["map_names"] = [maps.get(n, "") for n in (info.get("maps") or []) if maps.get(n)]
+        entry["map_names"] = [
+            maps.get(n, "") for n in (info.get("maps") or []) if maps.get(n)
+        ]
         small_out[ems] = entry
     print(f"  快照内小动物: {len(small_out)} 只（含掉落与栖息地图）")
 
@@ -1034,7 +1117,10 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
             "generator": "astrbot_plugin_mh_material/tools/extract.py",
             "game": "Monster Hunter Rise: Sunbreak",
             "source_files": {
-                "mhrice": {"name": mhrice_path.name, "sha256": file_sha256(mhrice_path)},
+                "mhrice": {
+                    "name": mhrice_path.name,
+                    "sha256": file_sha256(mhrice_path),
+                },
                 "items": {"name": items_path.name, "sha256": file_sha256(items_path)},
             },
             "notes": [
@@ -1065,8 +1151,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="生成 mh_material 插件快照")
     parser.add_argument("--mhrice", type=Path, help="mhrice.json 路径")
     parser.add_argument("--items", type=Path, help="items.json 路径")
-    parser.add_argument("--source-dir", type=Path, default=default_source_dir(),
-                        help="源文件目录（默认 D:\\下载）")
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        default=default_source_dir(),
+        help="源文件目录（默认 D:\\下载）",
+    )
     parser.add_argument("--out", type=Path, required=True, help="快照输出路径")
     parser.add_argument("--pretty", action="store_true", help="缩进输出")
     args = parser.parse_args(argv)

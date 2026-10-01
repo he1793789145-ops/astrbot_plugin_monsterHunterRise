@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """快照加载、索引与查询。
 
 数据来源是 ``tools/extract.py`` 生成的 snapshot.json。本模块只读快照，
@@ -12,9 +11,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 # 素材名匹配的排序权重：精确 > 前缀 > 包含
 _MATCH_EXACT = 0
@@ -46,9 +46,12 @@ def _candidate_paths() -> list[Path]:
     try:
         from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
-        paths.append(Path(get_astrbot_plugin_data_path()) / "mh_material" / "snapshot.json")
-    except Exception:
-        # 脱离 AstrBot 运行时（例如离线测试）时忽略
+        paths.append(
+            Path(get_astrbot_plugin_data_path()) / "mh_material" / "snapshot.json"
+        )
+    except Exception:  # noqa: BLE001, S110 - 有意兜底：本模块必须能在 AstrBot 之外导入
+        # 脱离 AstrBot 运行时会 ImportError；其它异常（例如包结构变化）也不该
+        # 让整个插件在启动阶段炸掉，下面的相对路径仍能兜住。
         pass
 
     plugin_root = Path(__file__).resolve().parent
@@ -102,7 +105,9 @@ class MaterialInfo:
         buckets: dict[str, dict] = {}
         for point in self.gathering:
             map_name = point.get("map") or "未知地图"
-            bucket = buckets.setdefault(map_name, {"map": map_name, "entries": [], "best": 0.0})
+            bucket = buckets.setdefault(
+                map_name, {"map": map_name, "entries": [], "best": 0.0}
+            )
             bucket["entries"].append(point)
             bucket["best"] = max(bucket["best"], _chance_value(point.get("chance")))
 
@@ -124,13 +129,17 @@ class MaterialInfo:
         buckets: dict[str, dict] = {}
         for source in self.sources:
             name = source.get("monster") or "未知"
-            bucket = buckets.setdefault(name, {"name": name, "entries": [], "best": 0.0})
+            bucket = buckets.setdefault(
+                name, {"name": name, "entries": [], "best": 0.0}
+            )
             bucket["entries"].append(source)
             bucket["best"] = max(bucket["best"], float(source.get("chance") or 0))
 
         ordered = sorted(buckets.values(), key=lambda b: (-b["best"], b["name"]))
         for bucket in ordered:
-            bucket["entries"].sort(key=lambda e: (-float(e.get("chance") or 0), e.get("kind") or ""))
+            bucket["entries"].sort(
+                key=lambda e: (-float(e.get("chance") or 0), e.get("kind") or "")
+            )
         return ordered[:max_monsters]
 
 
@@ -172,7 +181,9 @@ class MonsterInfo:
         if entry.get("kind") != "parts_break_reward" or not entry.get("part_name"):
             return entry
         labelled = dict(entry)
-        labelled["kind_label"] = f"{entry.get('kind_label') or '部位破坏报酬'}·{entry['part_name']}"
+        labelled["kind_label"] = (
+            f"{entry.get('kind_label') or '部位破坏报酬'}·{entry['part_name']}"
+        )
         return labelled
 
 
@@ -226,7 +237,9 @@ class Snapshot:
             name = (item.get("name") or "").strip()
             if name:
                 self._item_by_name.setdefault(name, []).append(key)
-            self._item_by_rarity.setdefault(int(item.get("rarity") or 0), []).append(key)
+            self._item_by_rarity.setdefault(int(item.get("rarity") or 0), []).append(
+                key
+            )
 
         for key, monster in self.monsters.items():
             for candidate in (monster.get("name"), monster.get("alias")):
@@ -357,7 +370,9 @@ class Snapshot:
                 found.append(self._quest_info(raw))
         return found
 
-    def top_quests_rewarding(self, item_id: str, limit: int = 5) -> tuple[list[dict], int]:
+    def top_quests_rewarding(
+        self, item_id: str, limit: int = 5
+    ) -> tuple[list[dict], int]:
         """产出该素材概率最高的若干个任务（走任务的通用素材报酬），返回 (任务列表, 总数)。
 
         注意：这条链路只覆盖约 5% 的素材（蜂蜜、蘑菇这类消耗品为主）。怪物素材
@@ -390,7 +405,9 @@ class Snapshot:
         scored.sort(key=lambda q: (-q["chance"], q["quest_no"]))
         return scored[:limit], len(scored)
 
-    def top_quests_dropping(self, material: MaterialInfo, limit: int = 5) -> tuple[list[dict], int]:
+    def top_quests_dropping(
+        self, material: MaterialInfo, limit: int = 5
+    ) -> tuple[list[dict], int]:
         """「去哪个任务刷这个素材」——按任务目标报酬推导。
 
         做法：素材 → 哪些怪物在「目标报酬」里给（这是任务结算奖励），
@@ -404,7 +421,9 @@ class Snapshot:
                 continue
             name = source.get("monster") or ""
             if name:
-                by_monster[name] = max(by_monster.get(name, 0.0), float(source.get("chance") or 0))
+                by_monster[name] = max(
+                    by_monster.get(name, 0.0), float(source.get("chance") or 0)
+                )
         if not by_monster:
             return [], 0
 
@@ -513,7 +532,11 @@ class Snapshot:
                 note = ""
                 if entry.get("name") != name:
                     note = f"别名：{name}"
-                matches.append(Match(key=key, name=entry.get("name") or name, score=score, note=note))
+                matches.append(
+                    Match(
+                        key=key, name=entry.get("name") or name, score=score, note=note
+                    )
+                )
 
         # 同一个 key 可能既被名字又被别名命中，去重保留最高分；
         # 小动物的多个 Ems（精灵鹿有 3 和 1283）会给出重名条目，
@@ -525,15 +548,20 @@ class Snapshot:
             if current is None or match.score < current.score:
                 best[match.key] = match
 
-        for match in sorted(best.values(), key=lambda m: (m.score, len(m.name), m.name)):
+        for match in sorted(
+            best.values(), key=lambda m: (m.score, len(m.name), m.name)
+        ):
             # 重名的保留最靠前（匹配度最高）的那条
             kept = by_display.get(match.name)
-            if kept is None:
-                by_display[match.name] = match
-            elif (match.score, len(match.key)) < (kept.score, len(kept.key)):
+            if kept is None or (match.score, len(match.key)) < (
+                kept.score,
+                len(kept.key),
+            ):
                 by_display[match.name] = match
 
-        ordered = sorted(by_display.values(), key=lambda m: (m.score, len(m.name), m.name))
+        ordered = sorted(
+            by_display.values(), key=lambda m: (m.score, len(m.name), m.name)
+        )
         return ordered[:limit]
 
 
@@ -587,7 +615,9 @@ def load_snapshot(path: Path | None = None) -> Snapshot:
             return snapshot
 
     searched = "、".join(str(p) for p in candidates if p)
-    raise SnapshotError(f"未找到快照文件，已查找：{searched}。请先运行 tools/extract.py 生成。")
+    raise SnapshotError(
+        f"未找到快照文件，已查找：{searched}。请先运行 tools/extract.py 生成。"
+    )
 
 
 def search_suggestions(snapshot: Snapshot, query: str, limit: int = 10) -> list[str]:

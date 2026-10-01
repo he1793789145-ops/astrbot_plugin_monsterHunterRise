@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """子命令注册表与卡片构建。
 
 命令表是「单一事实源」：``/mh help`` 的文本、参数校验、未知子命令的提示
@@ -8,11 +7,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
-from .render import Card, Line, Section
 from .data import MaterialInfo, MonsterInfo, QuestInfo, Snapshot
+from .render import Card, Line, Section
 
 # 每只怪物最多显示几条获取方式（与 render 里的上限不同：那是怪物数上限）
 MAX_ENTRIES_PER_MONSTER = 6
@@ -118,11 +117,17 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
                     (f"{_fmt_chance(quest['chance'])}", "chance"),
                 )
             )
-        footer = f"共 {total} 个任务可刷，此处列出概率最高的 {len(tops)} 个" if total > len(tops) else f"共 {total} 个任务可刷"
+        footer = (
+            f"共 {total} 个任务可刷，此处列出概率最高的 {len(tops)} 个"
+            if total > len(tops)
+            else f"共 {total} 个任务可刷"
+        )
         sections.append(Section(title="可刷任务", lines=lines, footer=footer))
 
     # 任务通用素材报酬（只覆盖小部分消耗品，有才显示）
-    reward_tops, reward_total = snapshot.top_quests_rewarding(material.item_id, limit=MAX_QUESTS)
+    reward_tops, reward_total = snapshot.top_quests_rewarding(
+        material.item_id, limit=MAX_QUESTS
+    )
     if reward_tops:
         lines = []
         for quest in reward_tops:
@@ -151,9 +156,14 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
         for group in map_groups:
             entries = group["entries"][:MAX_GATHERING_PER_MAP]
             detail = "  ".join(
-                f"{point.get('rank') or ''} {point.get('chance') or ''}".strip() for point in entries
+                f"{point.get('rank') or ''} {point.get('chance') or ''}".strip()
+                for point in entries
             )
-            extra = f" 等{len(group['entries'])}条" if len(group["entries"]) > len(entries) else ""
+            extra = (
+                f" 等{len(group['entries'])}条"
+                if len(group["entries"]) > len(entries)
+                else ""
+            )
             lines.append(
                 Line.of(
                     (group["map"], "body"),
@@ -184,7 +194,11 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
         sections.append(
             Section(
                 title="说明",
-                lines=[Line.of(("该素材没有怪物掉落记录，获取途径见上面的任务信息。", "muted"))],
+                lines=[
+                    Line.of(
+                        ("该素材没有怪物掉落记录，获取途径见上面的任务信息。", "muted")
+                    )
+                ],
             )
         )
 
@@ -212,7 +226,9 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
         if monster.map_names:
             lines = []
             for index in range(0, len(monster.map_names), 4):
-                lines.append(Line.of(("、".join(monster.map_names[index:index + 4]), "body")))
+                lines.append(
+                    Line.of(("、".join(monster.map_names[index : index + 4]), "body"))
+                )
             sections.append(Section(title="出现地图", lines=lines))
         else:
             sections.append(
@@ -223,7 +239,9 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
             )
 
     for rank, entries in monster.grouped_by_rank_then_kind():
-        rank_label = {"Low": "下位", "High": "上位", "Master": "大师"}.get(rank, rank or "未知")
+        rank_label = {"Low": "下位", "High": "上位", "Master": "大师"}.get(
+            rank, rank or "未知"
+        )
         lines = []
         for entry in entries[:14]:
             segments = [
@@ -243,9 +261,18 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
         )
 
     if not sections:
-        sections.append(Section(title="暂无数据", lines=[Line.of(("没有查到该怪物的掉落。", "muted"))]))
+        sections.append(
+            Section(
+                title="暂无数据", lines=[Line.of(("没有查到该怪物的掉落。", "muted"))]
+            )
+        )
 
-    return Card(title=monster.name, subtitle=subtitle, sections=sections, footnote=_footnote(snapshot))
+    return Card(
+        title=monster.name,
+        subtitle=subtitle,
+        sections=sections,
+        footnote=_footnote(snapshot),
+    )
 
 
 def build_quest_card(snapshot: Snapshot, quest: QuestInfo) -> Card:
@@ -267,14 +294,16 @@ def build_quest_card(snapshot: Snapshot, quest: QuestInfo) -> Card:
     if quest.bosses:
         lines = []
         for index in range(0, len(quest.bosses), 4):
-            chunk = "、".join(quest.bosses[index:index + 4])
+            chunk = "、".join(quest.bosses[index : index + 4])
             lines.append(Line.of((chunk, "body")))
         sections.append(Section(title="出场怪物", lines=lines))
 
     if quest.rewards:
         lines = []
         # 按概率降序，稀有素材高亮
-        for reward in sorted(quest.rewards, key=lambda r: -float(r.get("chance") or 0))[:20]:
+        for reward in sorted(quest.rewards, key=lambda r: -float(r.get("chance") or 0))[
+            :20
+        ]:
             style = "accent" if int(reward.get("rarity") or 0) >= 7 else "body"
             lines.append(
                 Line.of(
@@ -292,9 +321,19 @@ def build_quest_card(snapshot: Snapshot, quest: QuestInfo) -> Card:
             )
         )
     else:
-        sections.append(Section(title="结算奖励", lines=[Line.of(("该任务没有记录到结算奖励。", "muted"))]))
+        sections.append(
+            Section(
+                title="结算奖励",
+                lines=[Line.of(("该任务没有记录到结算奖励。", "muted"))],
+            )
+        )
 
-    return Card(title=quest.name, subtitle=subtitle, sections=sections, footnote=_footnote(snapshot))
+    return Card(
+        title=quest.name,
+        subtitle=subtitle,
+        sections=sections,
+        footnote=_footnote(snapshot),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -308,7 +347,9 @@ def handle_material(snapshot: Snapshot, argument: str) -> CommandResult:
 
     matches = snapshot.search_materials(argument, limit=12)
     if not matches:
-        return CommandResult(text=f"没有找到名为「{argument}」的素材。可以只输入名字的一部分再试试。")
+        return CommandResult(
+            text=f"没有找到名为「{argument}」的素材。可以只输入名字的一部分再试试。"
+        )
 
     # 精确命中一条就直接出卡
     exact = [m for m in matches if m.score == 0]
@@ -340,7 +381,9 @@ def handle_monster(snapshot: Snapshot, argument: str) -> CommandResult:
 
     matches = snapshot.search_monsters(argument, limit=12)
     if not matches:
-        return CommandResult(text=f"没有找到名为「{argument}」的怪物。可以只输入名字的一部分再试试。")
+        return CommandResult(
+            text=f"没有找到名为「{argument}」的怪物。可以只输入名字的一部分再试试。"
+        )
 
     exact = [m for m in matches if m.score == 0]
     if len(exact) == 1 or len(matches) == 1:
@@ -364,7 +407,9 @@ def handle_quest(snapshot: Snapshot, argument: str) -> CommandResult:
 
     matches = snapshot.search_quests(argument, limit=12)
     if not matches:
-        return CommandResult(text=f"没有找到名为「{argument}」的任务。可以只输入名字的一部分再试试。")
+        return CommandResult(
+            text=f"没有找到名为「{argument}」的任务。可以只输入名字的一部分再试试。"
+        )
 
     exact = [m for m in matches if m.score == 0]
     if len(exact) == 1 or len(matches) == 1:
@@ -420,7 +465,9 @@ COMMANDS: list[Command] = [
     ),
 ]
 
-COMMAND_INDEX: dict[str, Command] = {command.name.lower(): command for command in COMMANDS}
+COMMAND_INDEX: dict[str, Command] = {
+    command.name.lower(): command for command in COMMANDS
+}
 
 
 def render_help(snapshot: Snapshot) -> str:
@@ -504,7 +551,9 @@ def _footnote(snapshot: Snapshot) -> str:
     """
     parts = []
     inferred_maps = [
-        entry["name"] for entry in snapshot.maps.values() if entry.get("origin") == "inferred"
+        entry["name"]
+        for entry in snapshot.maps.values()
+        if entry.get("origin") == "inferred"
     ]
     if inferred_maps:
         parts.append("地图 " + "、".join(inferred_maps) + " 为推断值")
