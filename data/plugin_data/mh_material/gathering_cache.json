@@ -1,0 +1,2033 @@
+{
+ "source": "https://mhrise.kiranico.com/zh/data/items?view=material",
+ "fetched_at": "2026-10-01T05:49:15+00:00",
+ "gathering": {
+  "小木桶": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   }
+  ],
+  "大木桶": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   }
+  ],
+  "炸药": [
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   }
+  ],
+  "木桶盖": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   }
+  ],
+  "铁矿石": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "大地结晶": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "辉龙石": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "15%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "45%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "45%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "45%"
+   }
+  ],
+  "结冰金属": [
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "60%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   }
+  ],
+  "燕雀石": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "60%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   }
+  ],
+  "光水晶": [
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "50%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   }
+  ],
+  "雪光金属": [
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "50%"
+   }
+  ],
+  "红莲石": [
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "45%"
+   }
+  ],
+  "璀璨水晶": [
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "50%"
+   }
+  ],
+  "狱炎石": [
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   }
+  ],
+  "白鸠石": [
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "50%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "35%"
+   }
+  ],
+  "灵鹤石": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "35%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "35%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "35%"
+   }
+  ],
+  "扭曲怪骨": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   }
+  ],
+  "埋藏的骨骸": [
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "20%"
+   }
+  ],
+  "埋藏的龙骨骸": [
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "25%"
+   }
+  ],
+  "扭曲的坚怪骨": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "25%"
+   }
+  ],
+  "残缺龙骨": [
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "40%"
+   }
+  ],
+  "良质硬骨": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   }
+  ],
+  "古老龙骨": [
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "25%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   }
+  ],
+  "龙骨【小】": [
+   {
+    "map": "废神社",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "40%"
+   },
+   {
+    "map": "水没林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x1",
+    "chance": "15%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "密林",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "100%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "100%"
+   }
+  ],
+  "硬质骨头": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "40%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "下位",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "100%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x2",
+    "chance": "100%"
+   }
+  ],
+  "猫毛红玉": [
+   {
+    "map": "废神社",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "上位",
+    "quantity": "x1",
+    "chance": "30%"
+   }
+  ],
+  "妖辉石": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "寒霜金属": [
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "金光矿石": [
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "深红莲石": [
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "纯水晶": [
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "云鸠石": [
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "30%"
+   }
+  ],
+  "绯鸢石": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "45%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "45%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "45%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "15%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "15%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "45%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "15%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "50%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "50%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "50%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "50%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "20%"
+   }
+  ],
+  "终极结晶": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "5%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   }
+  ],
+  "碧蓝矿石": [
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "厚重龙骨": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "35%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "45%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "15%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "35%"
+   }
+  ],
+  "扭曲的重怪骨": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "10%"
+   }
+  ],
+  "巨大龙骨": [
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "25%"
+   }
+  ],
+  "三色矿石": [
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "40%"
+   }
+  ],
+  "结冻的重冰骨": [
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "10%"
+   }
+  ],
+  "埋藏的古龙骨骸": [
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "10%"
+   }
+  ],
+  "焦黑的重烧骨": [
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "10%"
+   }
+  ],
+  "散发土香的重泥骨": [
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "10%"
+   }
+  ],
+  "长满苔藓的重土骨": [
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "20%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x2",
+    "chance": "10%"
+   }
+  ],
+  "受损的重古骨": [
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   }
+  ],
+  "古老巨龙骨": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "10%"
+   }
+  ],
+  "猫毛大红玉": [
+   {
+    "map": "废神社",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "冰封群岛",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "沙原",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "水没林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "熔岩洞",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "密林",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   },
+   {
+    "map": "城塞高地",
+    "rank": "大师等级",
+    "quantity": "x1",
+    "chance": "30%"
+   }
+  ]
+ },
+ "failures": []
+}

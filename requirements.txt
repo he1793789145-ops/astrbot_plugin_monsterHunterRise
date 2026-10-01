@@ -1,0 +1,3 @@
+# 运行期依赖。Pillow 用于本地卡片绘制；
+# AstrBot 主环境通常已自带（实测该 venv 内为 Pillow 12.2.0）。
+Pillow>=10.0.0

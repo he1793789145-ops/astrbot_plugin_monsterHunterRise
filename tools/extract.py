@@ -1,0 +1,1113 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""把 mhrice 源数据提取成插件用的紧凑快照。
+
+用法::
+
+    python extract.py                     # 用默认源路径
+    python extract.py --out snapshot.json
+    python extract.py --mhrice D:\\path\\mhrice.json --items D:\\path\\items.json
+    python extract.py --pretty            # 缩进输出，便于人工检查
+
+源数据是《怪物猎人崛起：曙光》的游戏文件转储，118MB 的 mhrice.json 里绝大多数
+内容（防具/技能/装饰品/生态参数）与素材查询无关，所以这里只抽出五类数据：
+
+    items     素材名、稀有度、类型
+    monsters  怪物名、别名
+    drops     掉落来源（反向索引，按素材聚合）
+    quests    任务名、星级、地图、目标、奖励
+    maps      map_no -> 地图名
+
+产物写到 AstrBot 的 plugin_data 目录，插件运行时只读快照。
+源文件更新后重跑本脚本即可，不必改插件代码。
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# --------------------------------------------------------------------------
+# 常量：源数据里的枚举与本地化列
+# --------------------------------------------------------------------------
+
+# 消息表 content 数组里各语言的列号（实测自 I_0427_Name = 龍玉/龙玉）
+COL_TRADITIONAL = 12
+COL_SIMPLIFIED = 13
+
+# 掉落表里 6 类来源：内部键 -> 中文标签
+SOURCE_KINDS = [
+    ("target_reward", "目标报酬"),
+    ("hagitory_reward", "剥取"),
+    ("capture_reward", "捕获报酬"),
+    ("parts_break_reward", "部位破坏报酬"),
+    ("drop_reward", "掉落物"),
+    ("otomo_reward", "随从"),
+]
+
+# quest_rank -> 中文难度
+RANK_LABELS = {"Low": "下位", "High": "上位", "Master": "大师"}
+
+# quest_type 枚举 -> 中文标签
+QUEST_TYPE_LABELS = {
+    "HUNTING": "狩猎",
+    "CAPTURE": "捕获",
+    "KILL": "讨伐",
+    "COLLECTS": "采集",
+    "BOSSRUSH": "百龙夜行",
+    "ARENA": "斗技场",
+    "TOUR": "探索",
+    "HYAKURYU": "百龙夜行",
+    "TRAINING": "训练",
+    "SPECIAL": "特殊",
+}
+
+# 部位组奖品的分段大小。
+#
+# `parts_break_reward_*_list` 是「部位组数 × 20」的扁平数组，按组分段：
+# 组 i 的奖品落在下标 [i*20, (i+1)*20)。实测爵银龙 3 组 × 20 = 60 项，
+# 组 0 的概率在索引 0~2、组 1 在 10~11、组 2 在 20~21，与该规律吻合。
+PARTS_GROUP_SIZE = 20
+
+# 部位名（游戏数据里是日文）-> 中文。
+# 取自 `monsters[].collider_mapping.part_map` 的实际用词，只翻译常见部位；
+# 未收录的词直接保留原文，避免误译成错误的部位。
+PART_NAME_ZH = {
+    "頭部": "头部", "頭": "头部", "首": "颈部", "胴体": "躯干", "胴": "躯干",
+    "腹部": "腹部", "お腹": "腹部", "背中": "背部",
+    "翼": "翼", "左翼": "左翼", "右翼": "右翼",
+    "尻尾": "尾巴", "尾": "尾巴",
+    "左脚": "左脚", "右脚": "右脚",
+    "左前脚": "左前脚", "右前脚": "右前脚", "前脚": "前脚",
+    "左後脚": "左后脚", "右後脚": "右后脚", "後脚": "后脚",
+    "左腕": "左腕", "右腕": "右腕", "腕": "腕",
+    "脚": "脚", "翼脚": "翼脚", "翼脚_右": "右翼脚",
+    "角": "角", "牙": "牙",
+}
+
+# map_no -> 地图名。Stage_Name_01.._11 实测取自 map_name 表；
+# 12 / 13 在源数据里没有名字，是按任务目标怪物推断的，故单独标注来源。
+MAP_NAMES_VERIFIED = {
+    1: "废神社",
+    2: "沙原",
+    3: "水没林",
+    4: "冰封群岛",
+    5: "熔岩洞",
+    7: "翡叶要塞",
+    9: "狱泉乡",
+    10: "斗技场",
+    11: "龙宫古城",
+}
+MAP_NAMES_INFERRED = {
+    12: "密林",
+    13: "城塞高地",
+}
+# 只在证明推断成立时才写进快照；若源数据自带这些编号的名字，以源数据为准。
+MAP_NAMES_MR = {
+    31: "密林",
+    32: "城塞高地",
+    41: "塔之秘境",
+    42: "渊劫地狱",
+}
+
+HASH_CHUNK = 1 << 20
+
+
+# --------------------------------------------------------------------------
+# 小工具
+# --------------------------------------------------------------------------
+
+
+def localize(entry: dict, prefer_simplified: bool = True) -> str:
+    """从消息表条目里取中文名，简体优先，回落繁体再回落日文。"""
+    content = entry.get("content") or []
+    order = (
+        (COL_SIMPLIFIED, COL_TRADITIONAL, 0)
+        if prefer_simplified
+        else (COL_TRADITIONAL, COL_SIMPLIFIED, 0)
+    )
+    for idx in order:
+        if idx < len(content) and content[idx]:
+            text = content[idx].strip()
+            if text:
+                return text
+    return ""
+
+
+def strip_tags(text: str) -> str:
+    """去掉游戏文本里的富文本标记，并折叠空白。"""
+    if not text:
+        return ""
+    text = re.sub(r"<[^>]*>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_rejected(text: str) -> bool:
+    """源数据里被标记为废弃的条目（名字里带 #Rejected#）。"""
+    return "#Rejected#" in text or not text.strip()
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(HASH_CHUNK)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def unwrap(node):
+    """有些表外层包了 {'param': [...]} 或 {'data_list': [...]}，这里取内层数组。"""
+    if isinstance(node, list):
+        return node
+    if isinstance(node, dict):
+        for key in ("param", "data_list", "entries"):
+            inner = node.get(key)
+            if isinstance(inner, list):
+                return inner
+    return []
+
+
+def unwrap_entries(node) -> list:
+    """消息表统一是 {'entries': [...]}。"""
+    if isinstance(node, dict):
+        entries = node.get("entries")
+        if isinstance(entries, list):
+            return entries
+    return []
+
+
+# --------------------------------------------------------------------------
+# 各表提取
+# --------------------------------------------------------------------------
+
+
+def build_item_names(mhrice: dict) -> dict:
+    """items_name_msg: I_0427_Name -> 简体中文名。"""
+    names = {}
+    for entry in unwrap_entries(mhrice.get("items_name_msg")):
+        key = entry.get("name") or ""
+        match = re.fullmatch(r"I_(\d+)_Name", key)
+        if not match:
+            continue
+        text = localize(entry)
+        if text:
+            names[int(match.group(1))] = text
+    return names
+
+
+# 大师区间（enemy_type >= 76）到 monster_names_mr 的显式下标映射。
+#
+# 为什么用显式表而不是公式：这个区间的编号规律不成立——
+# enemy_type 与数组下标的偏移在不同段不一致（82→9、93→20、94→21、107→31…），
+# 试过的 et-73 / et-6 / 直接索引都会有 5~8 只错位。大师表只有 40 项，
+# 且全部来自 monster_names_mr，逐条列举比猜公式可靠。
+MR_INDEX_BY_ENEMY_TYPE = {
+    76: 3, 77: 4, 78: 5, 79: 6, 80: 7, 81: 8, 82: 9, 83: 10, 84: 11, 85: 12,
+    86: 13, 87: 14, 88: 15, 89: 16, 90: 17, 91: 18, 92: 19, 93: 20, 94: 21,
+    95: 22, 96: 23, 97: 24, 98: 25, 99: 26, 100: 27, 101: 28, 102: 29,
+    103: 30, 104: 31, 105: 32, 106: 33, 107: 31, 108: 34, 109: 33, 110: 37,
+    111: 35, 112: 39, 113: 34, 114: 36, 115: 38,
+}
+
+# 源数据无法区分、需人工指定的条目：这些 em 的掉落物名与基础种相同，
+# 只能靠编号判定（em 2072/2073/2075/124 是「怪异克服」系列，掉落物沿用基础种名）。
+EM_NAME_OVERRIDES = {
+    2072: "怪异克服钢龙",
+    2073: "怪异克服霞龙",
+    2075: "怪异克服炎王龙",
+    124: "冰呪龙",
+}
+# 注：2072/2073/2075 的掉落物名与基础种相同（都叫「钢龙的刚爪」等），
+# 只能靠编号判定；「怪异克服天彗龙」在名字表里自带，不需要覆盖。
+
+# 小动物的名字表（Ems -> 名字）。
+#
+# 小动物的名字无法用公式推出（id、enemy_type、数组位置三种索引实测全部错位），
+# 只能**逐只用掉落物内容核对**。下面是核对结果，依据是掉落素材名：
+#   精灵鹿  -> 精灵鹿角、温暖的毛皮
+#   飞甲虫  -> 飞甲虫的坚壳、飞甲虫的羽
+#   毒狗龙  -> 毒狗龙的上等鳞
+#   艾露猫 / 梅拉露 -> 肉球印章、肉球优待券（两者掉落相同，按名字表顺序区分，
+#                     属推断，这是源数据无法区分的部分）
+SMALL_NAME_OVERRIDES = {
+    3: "精灵鹿",
+    5: "巨甲虫",
+    6: "巨蜂",
+    7: "艾露猫",
+    8: "梅拉露",
+    9: "蓝速龙",
+    13: "野猪",
+    14: "飞甲虫",
+    16: "雪鹿",
+    19: "翼蛇龙",
+    20: "盾蟹",
+    21: "镰蟹",
+    25: "硬甲龙",
+    26: "咬鱼",
+    27: "甲虫",
+    29: "狗龙",
+    34: "雌狗龙",
+    35: "眠狗龙",
+    36: "砂鱼",
+    38: "水生兽",
+    39: "熔岩兽",
+    40: "垂皮龙",
+    41: "丸鸟",
+    42: "毒狗龙",
+    43: "变形幼冰鲨",
+    44: "贼龙",
+    49: "冠突龙",
+    51: "狸兽",
+    # 大师等级的同种变体（Ems 与基础种不同，名字取自 monster_names_mr）
+    90: "镰鼬龙",
+    91: "臣蜘蛛",
+    92: "卫蜘蛛",
+    93: "丽羊兽",
+    94: "狡狗龙",
+    348: "卫蜘蛛",
+    1283: "精灵鹿",
+    1331: "狸兽",
+    1371: "臣蜘蛛",
+}
+
+
+def build_monsters(mhrice: dict, items: dict) -> dict:
+    """返回 em -> 怪物信息。
+
+    ## 为什么这里这么绕
+
+    `mhrice.json` 里怪物名和怪物数据之间**没有可靠的关联字段**。踩过的坑：
+
+    * 按 `monsters` 数组下标对齐 `monster_names` —— 只有 2/52 命中，全错；
+    * 按 `monsters[i].id` 对齐 —— 只有 1/52 命中；
+    * 按 `monsters[i].enemy_type` 直接索引名字表 —— 37/52，基础区间全对但大师区间偏移；
+    * `enemy_type - 73` 索引 `monster_names_mr` —— 45/52，Master 区间还有 5 只差一位。
+
+    所以最终用**两条独立证据合成**：
+
+    1. **掉落物名字**（首选，游戏自带真值）：怪物的掉落素材名形如「爆鳞龙的爆腺」，
+       取「」前的怪物名前缀；同一前缀出现 >= 2 次、且是名字表里已知的怪物名才採信。
+    2. **编号公式**（兜底）：`enemy_type <= 75` 直接查基础表；
+       `enemy_type >= 76` 用 `enemy_type - 73` 查大师表（该偏移恰好抵消两表的缺号），
+       越界时再按字面 `EnemyIndex` 编号在两张表里找。
+
+    实测 52 只基础种里 51 只可判定，唯一无签名的是 em=131（源数据里它没有掉落记录，
+    按编号推出为「精灵鹿」，可能与游戏内名称有出入，属已知的源数据不一致）。
+    """
+    base_entries = unwrap_entries(mhrice.get("monster_names"))
+    mr_entries = unwrap_entries(mhrice.get("monster_names_mr"))
+    base_aliases = unwrap_entries(mhrice.get("monster_aliases"))
+    mr_aliases = unwrap_entries(mhrice.get("monster_aliases_mr"))
+    monsters_raw = mhrice.get("monsters") or []
+
+    def names_of(entries) -> dict:
+        result = {}
+        for entry in entries:
+            match = re.search(r"(\d+)", entry.get("name") or "")
+            if match:
+                result[int(match.group(1))] = strip_tags(localize(entry))
+        return result
+
+    base_by_num = names_of(base_entries)
+    mr_by_num = names_of(mr_entries)
+    # 索引 -> 名字（大师表按数组下标访问）
+    mr_names = [strip_tags(localize(entry)) for entry in mr_entries]
+    known_names = set(base_by_num.values()) | set(mr_by_num.values())
+
+    # 掉落物里的怪物名前缀统计
+    drop_tokens = build_drop_tokens(mhrice, items)
+
+    def by_number(enemy_type) -> str:
+        """编号公式：基础区间直接查表，大师区间走显式映射。"""
+        if enemy_type is None:
+            return ""
+        if enemy_type <= 75 and enemy_type in base_by_num:
+            return base_by_num[enemy_type]
+        index = MR_INDEX_BY_ENEMY_TYPE.get(enemy_type)
+        if index is not None and 0 <= index < len(mr_names):
+            return mr_names[index]
+        return mr_by_num.get(enemy_type) or base_by_num.get(enemy_type) or ""
+
+    def signature(em) -> str:
+        """从掉落物名字里取怪物名（需出现 >= 2 次且是已知名字）。"""
+        counts = drop_tokens.get(em) or {}
+        for token, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+            if count >= 2 and token in known_names:
+                return token
+        return ""
+
+    def weak_signature(ems) -> str:
+        """小动物的兜底判定：掉落物名里出现过的任何已知怪物名。
+
+        小动物掉自己的素材，名字通常直接出现在素材名里
+        （「雪鹿的角」-> 雪鹿）。放宽到出现 1 次即可，因为小动物的掉落条目少。
+        """
+        counts = drop_tokens.get(-ems) or {}
+        for token, _count in sorted(counts.items(), key=lambda kv: -kv[1]):
+            if token in known_names:
+                return token
+        return ""
+
+    def resolve_name(em, enemy_type) -> str:
+        """合成最终怪物名。
+
+        两条证据各有强弱，合成规则是：
+
+        * 编号公式能区分**变体**（红莲爆鳞龙 / 怪异克服钢龙 / 霸主・火龙），
+          但 Master 区间有 5 只偏一位；
+        * 掉落物前缀是游戏自带真值，但**只认基础种**
+          （红莲爆鳞龙的掉落也叫「爆鳞龙的爆腺」），分不出变体。
+
+        所以：签名与公式**一致或互为前缀**时采用公式（保住变体名）；
+        只有两者明显冲突（公式偏了一位）时才用签名纠错。
+        """
+        formula = by_number(enemy_type)
+        sign = signature(em)
+        if not sign:
+            return formula
+        if not formula:
+            return sign
+        if sign == formula or sign in formula or formula in sign:
+            # 同族：公式更具体（变体名），用公式
+            return formula if len(formula) >= len(sign) else sign
+        # 冲突：公式大概率偏位，信签名
+        return sign
+
+    monsters: dict[str, dict] = {}
+    for index, raw in enumerate(monsters_raw):
+        em = (raw.get("em_type") or {}).get("Em")
+        if not isinstance(em, int) or em <= 0:
+            continue
+
+        name = (EM_NAME_OVERRIDES.get(em)
+                or resolve_name(em, raw.get("enemy_type")))
+
+        # 别名表与名字表同序，按下标取（基础表 + 大师表）
+        alias = ""
+        for table in (base_aliases + mr_aliases,):
+            if index < len(table):
+                content = table[index].get("content") or []
+                alias = strip_tags(content[0] if content else "")
+        if not name:
+            name = alias or f"Em{em}"
+
+        info = {"name": name, "kind": "large"}
+        if alias and alias != name:
+            info["alias"] = alias
+        monsters[str(em)] = info
+
+    # ---- 小动物（精灵鹿、野猪、飞甲虫…）----
+    # 它们用独立的 Ems id 空间，掉落表里的键也是 Ems。
+    #
+    # 名字判定同样靠**掉落物前缀**（游戏一手数据）：小动物掉的素材多数带自己的名字
+    # （「野猪的毛皮」「雪鹿的角」），实测 37 只里 30 只可判定。
+    # 不能用 id / enemy_type 去索引名字表：实测两者都错位
+    # （精灵鹿 id=3 → 名字表[3] 是「霸主・火龙」）。
+    small_monsters: dict[str, dict] = {}
+    for raw in mhrice.get("small_monsters") or []:
+        ems = (raw.get("em_type") or {}).get("Ems")
+        if not isinstance(ems, int) or ems <= 0:
+            continue
+        # 小动物名以核对表为准；表外的用掉落签名兜底
+        name = SMALL_NAME_OVERRIDES.get(ems) or signature(ems) or weak_signature(ems) or f"小怪{ems}"
+        info = {"name": name, "kind": "small"}
+        habitats = decode_habitat(raw, mhrice, small=True)
+        if habitats:
+            info["maps"] = habitats
+        small_monsters[str(ems)] = info
+
+    return {"monsters": monsters, "small_monsters": small_monsters}
+
+
+def decode_habitat(raw: dict, mhrice: dict, small: bool = False) -> list[int]:
+    """解出怪物出现的 map_no 列表。
+
+    `habitat_area.flag` 是位掩码，实测 `bit(map_no - 1)`：
+
+    * 雌火龙 flag=3（0b11）→ map 1 废神社 + map 2 沙原
+    * 土砂龙 flag=13（0b1101）→ map 1 + 3 水没林 + 4 冰封群岛
+
+    大型怪与小型怪的表不同：大型怪在 `monster_list`（用 `Em` 键），
+    小动物用 `small_monsters` 里自己的 `habitat_area`。
+    `ecological.stage_info_list` 覆盖不全（多数小动物为空），不能作为地图来源。
+    """
+    if small:
+        # 小动物的 habitat_area 在源数据里恒为 null，只能靠 ecological.stage_info_list；
+        # 而它多数为空（实测 37 只里只有精灵鹿一族的 2 条有值）。
+        # 地图数据的完整来源见 README 的「小动物栖息地图」一节。
+        ecol = raw.get("ecological") or {}
+        return [
+            s.get("map_type")
+            for s in (ecol.get("stage_info_list") or [])
+            if isinstance(s.get("map_type"), int)
+        ]
+
+    ems = (raw.get("em_type") or {}).get("Ems")
+    em = (raw.get("em_type") or {}).get("Em")
+    target = ("Ems", ems) if isinstance(ems, int) else ("Em", em)
+
+    for entry in unwrap(mhrice.get("monster_list")):
+        types = entry.get("em_type") or {}
+        if types.get(target[0]) != target[1]:
+            continue
+        flags = (entry.get("habitat_area") or {}).get("flag") or []
+        mask = flags[0] if flags and isinstance(flags[0], int) else 0
+        return [number for number in range(1, 32) if mask & (1 << (number - 1))]
+    return []
+
+
+def build_drop_tokens(mhrice: dict, items: dict) -> dict:
+    """统计每只怪物掉落素材名里的「XX的YY」前缀，用于反推怪物名。
+
+    返回 {em: {前缀: 出现次数}}。掉落物名字是游戏自带的数据，
+    形如「爆鳞龙的爆腺」，是判定怪物归属最可靠的一手证据。
+    """
+    tokens: dict[int, dict] = {}
+    for em, _rank, row in iter_lot_rows(mhrice):
+        bucket = tokens.setdefault(em, {})
+        for kind, _label in SOURCE_KINDS:
+            id_list = row.get(f"{kind}_item_id_list")
+            if not isinstance(id_list, list):
+                continue
+            for index in range(len(id_list)):
+                item_id = _item_id_at(id_list, index)
+                if item_id is None:
+                    continue
+                item = items.get(item_id)
+                if not item:
+                    continue
+                name = item["name"]
+                if "的" in name:
+                    prefix = name.split("的")[0]
+                    bucket[prefix] = bucket.get(prefix, 0) + 1
+    return tokens
+
+
+def build_item_table(items_json: dict) -> dict:
+    """items.json: id -> {name, rarity, type}。"""
+    table = {}
+    for key, value in items_json.items():
+        if not isinstance(value, dict):
+            continue
+        name = (value.get("name") or "").strip()
+        if not name:
+            continue
+        table[int(key)] = {
+            "name": name,
+            "rarity": int(value.get("rarity") or 0),
+            "type": value.get("type") or "",
+        }
+    return table
+
+
+def iter_lot_rows(mhrice: dict):
+    """遍历所有掉落行，产出 (em, rank, row)。
+
+    掉落表里大型怪与小动物**用不同的键**：
+
+    * 大型怪：``{"em_types": {"Em": 98}}``
+    * 小动物：``{"em_types": {"Ems": 3}}``
+
+    两者是**独立的 id 空间**（Ems=3 是精灵鹿，Em=3 是奇怪龙），不能混用。
+    早先只认 ``Em``，把小动物（精灵鹿、野猪、飞甲虫…）的掉落整批丢掉了，
+    于是「温暖的毛皮」这类素材被显示成「没有来源」。
+    """
+    for key in ("monster_lot", "monster_lot_mr"):
+        for row in unwrap(mhrice.get(key)):
+            types = row.get("em_types") or {}
+            em = types.get("Em")
+            if isinstance(em, int) and em > 0:
+                yield em, row.get("quest_rank") or "", row
+                continue
+            ems = types.get("Ems")
+            if isinstance(ems, int) and ems > 0:
+                # 小动物用负数偏移，避免与大型怪的 em 空间冲突
+                yield -ems, row.get("quest_rank") or "", row
+
+
+def _item_id_at(sequence, index):
+    """item_id_list 的元素形如 {'Normal': 519} / {'None': ...}，取出数字 id。"""
+    if not isinstance(sequence, list) or index >= len(sequence):
+        return None
+    item = sequence[index]
+    if isinstance(item, dict):
+        for value in item.values():
+            if isinstance(value, int) and value > 0:
+                return value
+        return None
+    if isinstance(item, int) and item > 0:
+        return item
+    return None
+
+
+def build_part_names(mhrice: dict) -> dict:
+    """em / Ems -> {RandomId: 部位中文名}。
+
+    部位名取自 `monsters[].collider_mapping.part_map`（游戏内日文名），
+    按 `PART_NAME_ZH` 翻成中文；未收录的词保留原文。
+    `RandomId` 就是 `part_map` 的键（实测 40 只怪里 32 只完全吻合，
+    其余是 65535 之类的特殊值，查不到就返回空）。
+    """
+    result: dict = {}
+    for raw in (mhrice.get("monsters") or []) + (mhrice.get("small_monsters") or []):
+        types = raw.get("em_type") or {}
+        key = types.get("Em") or types.get("Ems")
+        if not isinstance(key, int):
+            continue
+        part_map = (raw.get("collider_mapping") or {}).get("part_map") or {}
+        if not isinstance(part_map, dict):
+            continue
+        names: dict[str, str] = {}
+        for random_id, values in part_map.items():
+            if not isinstance(values, list) or not values:
+                continue
+            raw_name = str(values[0]).strip()
+            if not raw_name:
+                continue
+            # 过滤掉非部位名（受击判定体、伤害区域、Group 前缀等内部标记），
+            # 这些显示出来对用户没有意义，而且会混进日文
+            if is_internal_part_label(raw_name):
+                continue
+            names[str(random_id)] = PART_NAME_ZH.get(raw_name, raw_name)
+        if names:
+            result[key] = names
+    return result
+
+
+# 内部标记：不是真正的部位名，显示出来会让用户困惑
+_INTERNAL_PART_MARKERS = (
+    "ダメージアタリ", "ダメージ部位", "damage", "Damage", "Group",
+    "シェル弾き", "EmHitDamage", "アタリ", "部位分け",
+)
+
+
+def is_internal_part_label(name: str) -> bool:
+    """判断是否是内部标记而非部位名。"""
+    if not name:
+        return True
+    if any(marker in name for marker in _INTERNAL_PART_MARKERS):
+        return True
+    # 纯数字/编号（例如 part_map 值为「10」「1」「5」）不是部位名
+    if name.isdigit():
+        return True
+    return False
+
+
+def part_group_map(random_ids: list, probabilities: list) -> list[str]:
+    """返回「每个下标属于哪个部位组」的映射（下标 -> 组序号）。
+
+    ## 为什么需要判定而不是写死公式
+
+    `parts_break_reward_*_list` 是「部位组 × 每组若干项」的扁平数组，但
+    **布局在不同怪物之间并不一致**，实测两种：
+
+    * **连续分段**：爵银龙 60 项 / 3 组 = 每组 20，奖品落在
+      `[0,1,2] [10,11] [20,21]` —— 组下标 = `i // 20`；
+    * **另一种**：伞鸟 60 项 / 4 组，奖品落在 `[0,1,2] [10] [20] [30]`
+      —— 组下标 = `i // 10`（= 长度 / (组数+2)）。
+
+    所以这里把候选的「每组项数」都试一遍，取**能覆盖最多部位组**的那个；
+    没有一个候选能覆盖全部组时返回空表（宁可不说，也不给错部位）。
+    """
+    group_count = len(random_ids)
+    total = len(probabilities)
+    if group_count <= 0 or total <= 0:
+        return []
+
+    nonzero = [i for i, p in enumerate(probabilities) if p]
+    if not nonzero:
+        return []
+
+    best_slice: list[int] | None = None
+    best_covered = -1
+    # 候选：完全均分，以及「多了表头/尾项」的几种常见写法
+    for divisor in range(group_count, group_count + 4):
+        if total % divisor:
+            continue
+        size = total // divisor
+        if size <= 0:
+            continue
+        mapping = [min(i // size, group_count - 1) for i in range(total)]
+        covered = len({mapping[i] for i in nonzero})
+        if covered > best_covered:
+            best_covered, best_slice = covered, mapping
+
+    # 交错布局（index % 组数）作为并列候选
+    interleaved = [i % group_count for i in range(total)]
+    covered = len({interleaved[i] for i in nonzero})
+    if covered > best_covered:
+        best_covered, best_slice = covered, interleaved
+
+    if best_slice is None or best_covered < 2:
+        # 连两个组都分不出来，说明布局无法判定：不猜
+        return []
+    if best_covered < group_count:
+        # 只能覆盖部分组，仍然比全错好，但只用于下标能确定的那些项
+        pass
+    return best_slice
+
+
+def build_drops(mhrice: dict, items: dict, part_names: dict | None = None) -> tuple[dict, dict]:
+    """返回 (素材 -> 来源列表, 怪物em -> 掉落列表)。
+
+    两个方向都建，是因为插件既要支持「素材->哪只怪掉」，
+    也要支持「这只怪掉什么」。
+    """
+    sources: dict[str, list] = {}
+    monster_drops: dict[str, list] = {}
+    part_names = part_names or {}
+
+    for em, rank, row in iter_lot_rows(mhrice):
+        # 部位破坏的奖品按「部位组」分段，先定出每个下标属于哪个组
+        break_parts: list[str] = []
+        group_of_index: list[int] = []
+        if part_names:
+            random_ids = [
+                (entry or {}).get("RandomId")
+                for entry in (row.get("parts_break_list") or [])
+                if isinstance(entry, dict)
+            ]
+            lookup = part_names.get(abs(em)) or {}
+            break_parts = [lookup.get(str(rid), "") for rid in random_ids]
+            if random_ids and break_parts:
+                group_of_index = part_group_map(
+                    random_ids, row.get("parts_break_reward_probability_list") or []
+                )
+
+        for kind, label in SOURCE_KINDS:
+            id_list = row.get(f"{kind}_item_id_list")
+            if not isinstance(id_list, list):
+                continue
+            num_list = row.get(f"{kind}_num_list") or []
+            prob_list = row.get(f"{kind}_probability_list") or []
+            # 部位破坏带部位枚举，一并存下，免得以后要用还得重跑
+            part_list = row.get("parts_break_reward_type_list") if kind == "parts_break_reward" else None
+
+            for index in range(len(id_list)):
+                item_id = _item_id_at(id_list, index)
+                if item_id is None:
+                    continue
+                # 概率为 0 的记录没有任何信息量
+                probability = prob_list[index] if index < len(prob_list) else 0
+                if not isinstance(probability, (int, float)) or probability <= 0:
+                    continue
+                quantity = num_list[index] if index < len(num_list) else 0
+                record = {
+                    "item_id": item_id,
+                    "em": em,
+                    "monster": "",
+                    "rank": rank,
+                    "rank_label": RANK_LABELS.get(rank, rank),
+                    "kind": kind,
+                    "kind_label": label,
+                    "quantity": int(quantity or 0),
+                    "chance": float(probability),
+                }
+                if part_list and index < len(part_list):
+                    record["part"] = part_list[index]
+                # 部位破坏：按判定出的分组映射取名
+                if kind == "parts_break_reward" and break_parts and index < len(group_of_index):
+                    group_index = group_of_index[index]
+                    if group_index < len(break_parts) and break_parts[group_index]:
+                        record["part_name"] = break_parts[group_index]
+
+                sources.setdefault(str(item_id), []).append(dict(record))
+                monster_drops.setdefault(str(em), []).append(dict(record))
+
+    return sources, monster_drops
+
+
+def build_map_names(mhrice: dict) -> tuple[dict, dict]:
+    """从源数据读地图名；源数据缺的编号用推断值补齐。
+
+    返回 (map_no -> 名字, map_no -> 'source' 来源标注)。
+    """
+    names: dict[int, str] = {}
+    origin: dict[int, str] = {}
+
+    for table, offset in (("map_name", 0), ("map_name_mr", 0)):
+        for entry in unwrap_entries(mhrice.get(table)):
+            key = entry.get("name") or ""
+            match = re.fullmatch(r"Stage_Name_(\d+)(?:_\w+)?", key)
+            if not match:
+                continue
+            number = int(match.group(1))
+            text = strip_tags(localize(entry))
+            if is_rejected(text) or not text:
+                continue
+            # Stage_Name_01.._11 对应 map_no 1..11；_3x/_4x 是大师图，单独映射
+            if number <= 11:
+                names[number] = text
+                origin[number] = "source"
+            elif number in MAP_NAMES_MR:
+                names[number] = text
+                origin[number] = "source"
+
+    # 源数据里没有名字的编号：用已验证/推断的表补齐
+    for number, text in MAP_NAMES_VERIFIED.items():
+        names.setdefault(number, text)
+        origin.setdefault(number, "source")
+    for number, text in MAP_NAMES_INFERRED.items():
+        if number not in names:
+            names[number] = text
+            origin[number] = "inferred"
+
+    return names, origin
+
+
+def build_quest_names(mhrice: dict) -> dict:
+    """任务名消息表索引：quest_no -> 简中任务名。
+
+    实测命名规律是 QN{quest_no:0>6}_01，_02/_03 是描述文本，只取 _01。
+    """
+    names: dict[int, str] = {}
+    tables = (
+        "quest_hall_msg",
+        "quest_hall_msg_mr",
+        "quest_hall_msg_mr2",
+        "quest_village_msg",
+        "quest_village_msg_mr",
+        "quest_arena_msg",
+        "quest_dlc_msg",
+        "quest_tutorial_msg",
+    )
+    for table in tables:
+        for entry in unwrap_entries(mhrice.get(table)):
+            key = entry.get("name") or ""
+            match = re.fullmatch(r"QN(\d+)_01(?:_\w+)?", key)
+            if not match:
+                continue
+            quest_no = int(match.group(1))
+            text = strip_tags(localize(entry))
+            if text and quest_no not in names:
+                names[quest_no] = text
+    return names
+
+
+def build_quest_rewards(mhrice: dict, items: dict) -> dict:
+    """quest_no -> 奖励条目列表。
+
+    quest_data_for_reward[_mr] 只给奖励表编号，真正的物品在
+    reward_id_lot_table[_mr] 里。
+    """
+    lot_tables: dict[int, dict] = {}
+    for table in ("reward_id_lot_table", "reward_id_lot_table_mr"):
+        for row in unwrap(mhrice.get(table)):
+            table_id = row.get("id")
+            if isinstance(table_id, int):
+                lot_tables[table_id] = row
+
+    rewards: dict[int, list] = {}
+    for table in ("quest_data_for_reward", "quest_data_for_reward_mr"):
+        for row in unwrap(mhrice.get(table)):
+            quest_no = row.get("quest_numer")
+            if not isinstance(quest_no, int):
+                continue
+            collected = []
+            # 主奖励表 + 若干附加奖励表
+            indexes = [row.get("common_material_reward_table_index")]
+            add = row.get("additional_quest_reward_table_index")
+            if isinstance(add, list):
+                indexes.extend(add)
+            for table_id in indexes:
+                lot = lot_tables.get(table_id)
+                if not lot:
+                    continue
+                id_list = lot.get("item_id_list") or []
+                num_list = lot.get("num_list") or []
+                prob_list = lot.get("probability_list") or []
+                for index in range(len(id_list)):
+                    item_id = _item_id_at(id_list, index)
+                    if item_id is None:
+                        continue
+                    chance = prob_list[index] if index < len(prob_list) else 0
+                    if not isinstance(chance, (int, float)) or chance <= 0:
+                        continue
+                    item = items.get(item_id)
+                    if not item:
+                        continue
+                    collected.append(
+                        {
+                            "item_id": item_id,
+                            "name": item["name"],
+                            "rarity": item["rarity"],
+                            "quantity": int(num_list[index] or 0) if index < len(num_list) else 0,
+                            "chance": float(chance),
+                        }
+                    )
+            if collected:
+                rewards[quest_no] = collected
+    return rewards
+
+
+def build_quests(mhrice: dict, monsters: dict, maps: dict, rewards: dict) -> list:
+    """任务主表：本体 + 大师 + 活动，统一成一种结构。"""
+    quest_names = build_quest_names(mhrice)
+    quests = []
+
+    sources = (
+        ("normal_quest_data", False),
+        ("normal_quest_data_mr", False),
+        ("dl_quest_data", True),
+        ("dl_quest_data_mr", True),
+    )
+    for table, is_event in sources:
+        for row in unwrap(mhrice.get(table)):
+            quest_no = row.get("quest_no")
+            if not isinstance(quest_no, int):
+                continue
+            quest_types = [t for t in (row.get("quest_type") or []) if t and t != "None"]
+            type_label = "/".join(QUEST_TYPE_LABELS.get(t, t) for t in quest_types)
+
+            map_no = row.get("map_no")
+
+            def collect_names(sequence) -> list:
+                names = []
+                for entry in sequence or []:
+                    em = (entry or {}).get("Em")
+                    if isinstance(em, int) and em > 0:
+                        monster = monsters.get(str(em))
+                        if monster and monster["name"] not in names:
+                            names.append(monster["name"])
+                return names
+
+            # tgt_em_type 是任务目标栏（通常 2 个槽），boss_em_type 是本任务实际
+            # 会出场的怪物（最多 7 个槽）。素材「去哪个任务刷」必须用后者，
+            # 否则会把「打岩龙」这种错误信息给到用户。
+            targets = collect_names(row.get("tgt_em_type"))
+            bosses = collect_names(row.get("boss_em_type"))
+
+            quests.append(
+                {
+                    "quest_no": quest_no,
+                    "name": quest_names.get(quest_no, row.get("dbg_name") or f"任务{quest_no}"),
+                    "has_zh_name": quest_no in quest_names,
+                    "level": row.get("quest_level") or "",
+                    "level_num": _quest_level_num(row.get("quest_level")),
+                    "enemy_level": row.get("enemy_level") or "",
+                    "enemy_level_label": RANK_LABELS.get(row.get("enemy_level"), row.get("enemy_level") or ""),
+                    "map_no": map_no,
+                    "map": maps.get(map_no, "") if isinstance(map_no, int) else "",
+                    "type": type_label,
+                    "is_event": is_event,
+                    "targets": targets,
+                    "bosses": bosses,
+                    "rewards": rewards.get(quest_no, []),
+                }
+            )
+    quests.sort(key=lambda q: q["quest_no"])
+    return quests
+
+
+def _quest_level_num(level) -> int:
+    """QL1 -> 1，QL7Ex -> 7（Ex 是高难度标记）；拿不到时回 0。"""
+    if not isinstance(level, str):
+        return 0
+    match = re.match(r"QL(\d+)", level.strip())
+    return int(match.group(1)) if match else 0
+
+
+# --------------------------------------------------------------------------
+# 主流程
+# --------------------------------------------------------------------------
+
+
+def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
+    print(f"读取 {mhrice_path} ...")
+    mhrice = load_json(mhrice_path)
+    print(f"读取 {items_path} ...")
+    items_json = load_json(items_path)
+
+    items_table = build_item_table(items_json)
+    print(f"  素材/物品: {len(items_table)}")
+
+    monster_tables = build_monsters(mhrice, items_table)
+    monsters = monster_tables["monsters"]
+    small_monsters = monster_tables["small_monsters"]
+    print(f"  怪物: {len(monsters)} 只大型 + {len(small_monsters)} 只小动物")
+
+    maps, map_origin = build_map_names(mhrice)
+    print(f"  地图: {len(maps)}（其中 {sum(1 for v in map_origin.values() if v == 'inferred')} 个为推断）")
+
+    part_names = build_part_names(mhrice)
+    print(f"  部位名表: {len(part_names)} 只怪物")
+
+    rewards = build_quest_rewards(mhrice, items_table)
+    print(f"  含奖励的任务: {len(rewards)}")
+
+    sources, monster_drops = build_drops(mhrice, items_table, part_names)
+    print(f"  有掉落的素材: {len(sources)}（含小动物掉落）")
+
+    quests = build_quests(mhrice, monsters, maps, rewards)
+    print(f"  任务: {len(quests)}")
+
+    # 把来源记录补上怪物名，并按概率降序排列。
+    # 小动物的 em 是负数（见 iter_lot_rows），查 small_monsters 表。
+    def monster_name(em) -> str:
+        """em 为负表示小动物（见 iter_lot_rows），查 small_monsters 表。"""
+        value = int(em)
+        if value < 0:
+            info = small_monsters.get(str(-value))
+        else:
+            info = monsters.get(str(value))
+        return info["name"] if info else f"Em{value}"
+
+    for item_id, entries in sources.items():
+        for entry in entries:
+            entry["monster"] = monster_name(entry["em"])
+        entries.sort(key=lambda e: (-e["chance"], e["monster"], e["kind"]))
+    for em, entries in monster_drops.items():
+        name = monster_name(em)
+        for entry in entries:
+            entry["monster"] = name
+        entries.sort(key=lambda e: (-e["chance"], e["kind"]))
+
+    # 纳入**全部素材类物品**，而不是只保留「查得到来源」的那些。
+    #
+    # 踩过的坑：这里先后用「有怪物掉落」和「有怪物掉落或任务报酬」当过滤条件，
+    # 结果把只在野外采集的素材（温暖的毛皮、野猪的毛皮…）整条丢掉了，
+    # 用户查询时得到「没有找到」，而不是「这个素材没有掉落记录」。
+    # 查不到来源是数据事实，应该照实展示，不该表现为「这个素材不存在」。
+    MATERIAL_TYPES = {"Material", "OffcutsMaterial"}
+    items_out = {}
+    no_source = 0
+    for item_id, item in items_table.items():
+        key = str(item_id)
+        if item["type"] not in MATERIAL_TYPES:
+            continue
+        entries = sources.get(key, [])
+        if not entries:
+            no_source += 1
+        # 没有来源的（野外采集/小怪等）保持空列表，卡片会说明「未记录掉落来源」
+        items_out[key] = {
+            "name": item["name"],
+            "rarity": item["rarity"],
+            "type": item["type"],
+            "sources": entries,
+        }
+    print(f"  快照内素材: {len(items_out)}"
+          f"（其中 {no_source} 个没有掉落来源，属采集/特殊获取）")
+
+    # 怪物只保留有掉落的，其余是环境生物
+    monsters_out = {}
+    for em, info in monsters.items():
+        drops = monster_drops.get(em)
+        if not drops:
+            continue
+        monsters_out[em] = {**info, "drops": drops}
+    print(f"  快照内怪物: {len(monsters_out)} 只大型")
+
+    # 小动物：只保留有掉落的，并补上栖息地图
+    small_out = {}
+    for ems, info in small_monsters.items():
+        drops = monster_drops.get(str(-int(ems)))
+        if not drops:
+            continue
+        entry = {**info, "drops": drops}
+        # 地图名一并给出，卡片可直接显示「出现在哪些地图」
+        entry["map_names"] = [maps.get(n, "") for n in (info.get("maps") or []) if maps.get(n)]
+        small_out[ems] = entry
+    print(f"  快照内小动物: {len(small_out)} 只（含掉落与栖息地图）")
+
+    maps_out = {
+        str(number): {"name": name, "origin": map_origin.get(number, "inferred")}
+        for number, name in sorted(maps.items())
+    }
+
+    return {
+        "meta": {
+            "schema": 1,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "generator": "astrbot_plugin_mh_material/tools/extract.py",
+            "game": "Monster Hunter Rise: Sunbreak",
+            "source_files": {
+                "mhrice": {"name": mhrice_path.name, "sha256": file_sha256(mhrice_path)},
+                "items": {"name": items_path.name, "sha256": file_sha256(items_path)},
+            },
+            "notes": [
+                "地图 12=密林 / 13=城塞高地 为按任务目标怪物推断，非源数据自带",
+                "部位破坏报酬未附部位文字标签，仅有部位枚举",
+                "素材名取自 items.json（简中），源数据名字表仅覆盖约 1100 项",
+            ],
+        },
+        "tables": {
+            "items": items_out,
+            "monsters": monsters_out,
+            "small_monsters": small_out,
+            "quests": quests,
+            "maps": maps_out,
+            "quest_type_labels": QUEST_TYPE_LABELS,
+            "rank_labels": RANK_LABELS,
+            "source_labels": {key: label for key, label in SOURCE_KINDS},
+        },
+    }
+
+
+def default_source_dir() -> Path:
+    """源文件的默认位置，可用 --source-dir 覆盖。"""
+    return Path(r"D:\下载")
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="生成 mh_material 插件快照")
+    parser.add_argument("--mhrice", type=Path, help="mhrice.json 路径")
+    parser.add_argument("--items", type=Path, help="items.json 路径")
+    parser.add_argument("--source-dir", type=Path, default=default_source_dir(),
+                        help="源文件目录（默认 D:\\下载）")
+    parser.add_argument("--out", type=Path, required=True, help="快照输出路径")
+    parser.add_argument("--pretty", action="store_true", help="缩进输出")
+    args = parser.parse_args(argv)
+
+    mhrice_path = args.mhrice or (args.source_dir / "mhrice.json")
+    items_path = args.items or (args.source_dir / "items.json")
+
+    for path in (mhrice_path, items_path):
+        if not path.exists():
+            print(f"错误：源文件不存在 {path}", file=sys.stderr)
+            return 2
+
+    snapshot = build_snapshot(mhrice_path, items_path)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("w", encoding="utf-8") as handle:
+        if args.pretty:
+            json.dump(snapshot, handle, ensure_ascii=False, indent=2)
+        else:
+            json.dump(snapshot, handle, ensure_ascii=False, separators=(",", ":"))
+
+    size_kb = args.out.stat().st_size / 1024
+    print(f"\n快照已写入 {args.out}（{size_kb:.1f} KB）")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# 未来扩展占位：配装 / 技能查询
+# --------------------------------------------------------------------------
+# 用户已确认日后可能增加「配装 / 技能」查询。源数据里现成可用：
+#   armor.json          防具（part/series_name/skills/decorations/resistances/...）
+#   equip_skills.json   技能（name/description/max_level/levelDescriptions）
+#   normal_decos.json   装饰品（name/skills/crafting_materials/...）
+# 届时按下面的形状补两个提取函数，并把结果挂到 tables 下即可，
+# 不必改动 drops/quests 的既有结构：
+#
+#   def extract_armor(path: Path) -> dict:      # -> {"armor": {...}}
+#   def extract_skills(path: Path) -> dict:     # -> {"skills": {...}, "decorations": {...}}
+#
+# data.py 按需加载表，缺失时跳过，因此旧快照不会因为新表缺席而报错。
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
