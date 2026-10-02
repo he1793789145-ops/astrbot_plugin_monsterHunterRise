@@ -31,6 +31,7 @@ INCLUDE_FILES = (
     "tools/extract.py",
     "tools/fetch_gathering.py",
     "tools/fetch_habitats.py",
+    "tools/rebuild_snapshot.py",
     "tools/selftest.py",
     "tools/verify_astrbot_args.py",
     "data/plugin_data/mh_material/snapshot.json",

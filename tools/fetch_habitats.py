@@ -53,6 +53,8 @@ USER_AGENT = (
 TIMEOUT = 30
 BATCH = 50  # MediaWiki 单次 titles 上限
 REQUEST_DELAY = 0.6  # 请求间隔，避免给对方压力
+RETRIES = 4  # 被限流时重试次数
+RETRY_BACKOFF = 2.5  # 退避基数（秒），第 n 次重试等 n * 基数
 
 # `'''出现场地：'''` 后面那一行里，[[场地/XX|YY]] 的 XX
 HABITAT_FIELD = re.compile(r"'''出现场地：'''(.*)")
@@ -60,21 +62,41 @@ PLACE_LINK = re.compile(r"\[\[场地/([^|\]]+)")
 
 
 def fetch(params: dict) -> dict:
-    """调用 MediaWiki API 并返回解析后的 JSON。"""
+    """调用 MediaWiki API 并返回解析后的 JSON。
+
+    站点在请求过密时会返回非 JSON（HTML 错误页或空响应），
+    所以这里带重试与退避；仍然失败就抛 ValueError，由调用方决定是否跳过。
+    """
     url = f"{API}?{urllib.parse.urlencode(params)}"
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept-Language": "zh-CN,zh;q=0.9",
-            "Accept-Encoding": "gzip",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-        raw = response.read()
-        if response.headers.get("Content-Encoding") == "gzip":
-            raw = gzip.decompress(raw)
-    return json.loads(raw.decode("utf-8", errors="replace"))
+    last_error = ""
+    for attempt in range(RETRIES):
+        if attempt:
+            time.sleep(RETRY_BACKOFF * attempt)
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                "Accept-Encoding": "gzip",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                raw = response.read()
+                if response.headers.get("Content-Encoding") == "gzip":
+                    raw = gzip.decompress(raw)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = f"网络错误：{exc}"
+            continue
+
+        text = raw.decode("utf-8", errors="replace").strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # 被限流时常见：返回 HTML 或空体
+            last_error = f"返回的不是 JSON（前 80 字符：{text[:80]!r}）"
+            print(f"  [重试 {attempt + 1}/{RETRIES}] {last_error}")
+    raise ValueError(f"API 请求失败：{last_error}")
 
 
 def list_monster_pages() -> list[str]:
@@ -163,6 +185,16 @@ def probe() -> int:
     return 0
 
 
+def load_cache(path: Path) -> dict:
+    """读取缓存里的栖息地图，失败返回空 dict。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    habitats = data.get("habitats")
+    return habitats if isinstance(habitats, dict) else {}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="从 gamecat.fun 补全怪物栖息地图")
     parser.add_argument("--probe", action="store_true", help="只验证解析，不写快照")
@@ -173,6 +205,11 @@ def main(argv=None) -> int:
         default=Path("habitat_cache.json"),
         help="原始抓取结果缓存",
     )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="忽略缓存强制联网重抓（默认缓存优先）",
+    )
     args = parser.parse_args(argv)
 
     if args.probe:
@@ -182,24 +219,49 @@ def main(argv=None) -> int:
         print("错误：需要 --out 指定快照路径（或加 --probe）", file=sys.stderr)
         return 2
 
-    names = list_monster_pages()
-    print(f"怪物页面 {len(names)} 个，开始抓取栖息地 ...")
-    habitats = fetch_habitats(names)
-    print(f"共 {len(habitats)} 只怪物拿到地图")
+    # ---- 缓存优先 ----
+    # 该站会返回 JavaScript 反爬挑战页（不是限流，重试无用），而地图数据变化极少。
+    # 所以缓存够用就直接用，不联网；需要更新时加 --refresh。
+    cached = load_cache(args.cache)
+    habitats = {}
+    if cached and not args.refresh:
+        print(f"使用缓存 {args.cache}（{len(cached)} 只怪物）")
+        habitats = cached
+    else:
+        try:
+            names = list_monster_pages()
+            print(f"怪物页面 {len(names)} 个，开始抓取栖息地 ...")
+            habitats = fetch_habitats(names)
+            print(f"共 {len(habitats)} 只怪物拿到地图")
+        except (ValueError, OSError) as exc:
+            print(f"[警告] 抓取失败：{exc}", file=sys.stderr)
+            if cached:
+                print(f"[警告] 回退到缓存（{len(cached)} 只怪物）", file=sys.stderr)
+                habitats = cached
+            else:
+                print(
+                    "[警告] 没有可用缓存，栖息地图将保持缺失。"
+                    "站点可能启用了反爬挑战，稍后重试或手动准备缓存。",
+                    file=sys.stderr,
+                )
+                habitats = {}
 
-    args.cache.write_text(
-        json.dumps(
-            {
-                "source": f"{API} (gamecat.fun 游猫网)",
-                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "habitats": habitats,
-            },
-            ensure_ascii=False,
-            indent=1,
-        ),
-        encoding="utf-8",
-    )
-    print(f"原始结果已缓存到 {args.cache}")
+    if habitats:
+        args.cache.write_text(
+            json.dumps(
+                {
+                    "source": f"{API} (gamecat.fun 游猫网)",
+                    "fetched_at": datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    ),
+                    "habitats": habitats,
+                },
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        print(f"原始结果已缓存到 {args.cache}")
 
     snapshot = json.loads(args.out.read_text(encoding="utf-8"))
     tables = snapshot["tables"]

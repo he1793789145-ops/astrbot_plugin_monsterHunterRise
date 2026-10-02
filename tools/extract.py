@@ -286,54 +286,25 @@ EM_NAME_OVERRIDES = {
 # 注：2072/2073/2075 的掉落物名与基础种相同（都叫「钢龙的刚爪」等），
 # 只能靠编号判定；「怪异克服天彗龙」在名字表里自带，不需要覆盖。
 
-# 小动物的名字表（Ems -> 名字）。
+# 小动物的名字表（Ems -> 名字），只用于**无法从编号推出**的少数几只。
 #
-# 小动物的名字无法用公式推出（id、enemy_type、数组位置三种索引实测全部错位），
-# 只能**逐只用掉落物内容核对**。下面是核对结果，依据是掉落素材名：
-#   精灵鹿  -> 精灵鹿角、温暖的毛皮
-#   飞甲虫  -> 飞甲虫的坚壳、飞甲虫的羽
-#   毒狗龙  -> 毒狗龙的上等鳞
-#   艾露猫 / 梅拉露 -> 肉球印章、肉球优待券（两者掉落相同，按名字表顺序区分，
-#                     属推断，这是源数据无法区分的部分）
+# 判定顺序见 build_monsters 里的小动物分支：
+#   1. 名字表[enemy_type]（主规则，实测与掉落物一致）
+#   2. 掉落物前缀签名（小动物掉自己的素材，「丸鸟的羽」-> 丸鸟）
+#   3. 本表（兜底，用于编号对不上且掉落物不带自己名字的少数几只）
+#
+# 曾经踩过的坑：早先这张表是**按名字表位置逐条硬写的**，整体错位一位，
+# 结果「药草」被标成毒狗龙的掉落（实际是丸鸟），24 只小动物全错。
+# 现在改为以编号为主、掉落物校验，本表只留真正需要人工指定的。
 SMALL_NAME_OVERRIDES = {
+    # 掉落物不带自己名字（掉的是「温暖的毛皮 / 优质的毛皮 / 极品毛皮」这类通用素材），
+    # 编号映射也会落到别的怪身上，所以只能人工指定
     3: "精灵鹿",
-    5: "巨甲虫",
-    6: "巨蜂",
+    1283: "精灵鹿",
+    # 掉落物是通用素材，签名与编号都判不出
     7: "艾露猫",
     8: "梅拉露",
-    9: "蓝速龙",
-    13: "野猪",
-    14: "飞甲虫",
-    16: "雪鹿",
-    19: "翼蛇龙",
-    20: "盾蟹",
-    21: "镰蟹",
-    25: "硬甲龙",
-    26: "咬鱼",
-    27: "甲虫",
-    29: "狗龙",
-    34: "雌狗龙",
-    35: "眠狗龙",
-    36: "砂鱼",
-    38: "水生兽",
-    39: "熔岩兽",
-    40: "垂皮龙",
-    41: "丸鸟",
-    42: "毒狗龙",
-    43: "变形幼冰鲨",
-    44: "贼龙",
-    49: "冠突龙",
-    51: "狸兽",
-    # 大师等级的同种变体（Ems 与基础种不同，名字取自 monster_names_mr）
-    90: "镰鼬龙",
-    91: "臣蜘蛛",
-    92: "卫蜘蛛",
-    93: "丽羊兽",
-    94: "狡狗龙",
-    348: "卫蜘蛛",
-    1283: "精灵鹿",
-    1331: "狸兽",
-    1371: "臣蜘蛛",
+    44: "变形幼冰鲨",
 }
 
 
@@ -362,8 +333,6 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
     """
     base_entries = unwrap_entries(mhrice.get("monster_names"))
     mr_entries = unwrap_entries(mhrice.get("monster_names_mr"))
-    base_aliases = unwrap_entries(mhrice.get("monster_aliases"))
-    mr_aliases = unwrap_entries(mhrice.get("monster_aliases_mr"))
     monsters_raw = mhrice.get("monsters") or []
 
     def names_of(entries) -> dict:
@@ -376,6 +345,12 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
 
     base_by_num = names_of(base_entries)
     mr_by_num = names_of(mr_entries)
+    # 按**数组位置**索引的名字（基础表 + 大师表）。
+    # 小动物的 enemy_type 是这张合并表的位置索引，实测与掉落物一致：
+    #   et=66 -> 位置 66 = 丸鸟（掉落物正是「丸鸟的羽」）
+    #   et=51 -> 位置 51 = 野猪（掉落物「野猪的毛皮」）
+    # 注意不能用 names_of 得到的「编号映射」——那是另一个体系，会对错。
+    names_by_index = [strip_tags(localize(e)) for e in (base_entries + mr_entries)]
     # 索引 -> 名字（大师表按数组下标访问）
     mr_names = [strip_tags(localize(entry)) for entry in mr_entries]
     known_names = set(base_by_num.values()) | set(mr_by_num.values())
@@ -447,18 +422,14 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
 
         name = EM_NAME_OVERRIDES.get(em) or resolve_name(em, raw.get("enemy_type"))
 
-        # 别名表与名字表同序，按下标取（基础表 + 大师表）
-        alias = ""
-        for table in (base_aliases + mr_aliases,):
-            if index < len(table):
-                content = table[index].get("content") or []
-                alias = strip_tags(content[0] if content else "")
-        if not name:
-            name = alias or f"Em{em}"
-
+        # ---- 别名：不采用 ----
+        # 这个导出文件的别名表整体错位一位（别名表[0] 是「雌火竜」，对得上
+        # 名字表[0] 雌火龙，但 `Alias_EnemyIndex001` 标的是「雌火竜 ヌシ・
+        # リオレイア」，按编号取会取到下一只怪的别名）。
+        # 逐条校验后 78 只里只剩极少数能自洽，且仍有「霸主・火龙」被当成
+        # 「火龙」的错例。别名在卡片上只是装饰，错的名字比没有更糟，
+        # 所以这里直接不输出。
         info = {"name": name, "kind": "large"}
-        if alias and alias != name:
-            info["alias"] = alias
         monsters[str(em)] = info
 
     # ---- 小动物（精灵鹿、野猪、飞甲虫…）----
@@ -473,13 +444,41 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
         ems = (raw.get("em_type") or {}).get("Ems")
         if not isinstance(ems, int) or ems <= 0:
             continue
-        # 小动物名以核对表为准；表外的用掉落签名兜底
-        name = (
-            SMALL_NAME_OVERRIDES.get(ems)
-            or signature(ems)
-            or weak_signature(ems)
-            or f"小怪{ems}"
-        )
+        enemy_type = raw.get("enemy_type")
+        # 小动物名判定顺序（按可靠性）：
+        #   1. **掉落物前缀签名** —— 小动物掉自己的素材（「丸鸟的羽」-> 丸鸟），
+        #      这是游戏一手数据，实测 37 只里 30 只可判定，且与用户看到的现象一致。
+        #   2. 名字表[enemy_type]（按数组位置）—— 兜底，只在没有签名时用。
+        #   3. SMALL_NAME_OVERRIDES —— 极少数既无签名、编号又对不上的。
+        #
+        # 为什么签名优先：这个导出文件的 `enemy_type` 编号**本身错乱**——
+        # 逐只核对发现，有的要 [et-2]、有的要 [et]、有的要 [et+1]，
+        # 没有任何单一公式能覆盖（同名表内部自相矛盾）。而掉落物名永远是对的。
+        # 踩过的坑：早先按位置硬写覆盖表，整体错位一位，
+        # 导致「药草」被标成毒狗龙的掉落（实际是丸鸟），24 只小动物全错。
+        # 注意：掉落表的键对小动物是**负数**（见 iter_lot_rows），
+        # signature() 收的是那个键，所以要传 -ems。早先误传正数 ems，
+        # 于是签名静默失效（拿到的是大型怪的数据），整段逻辑形同虚设。
+        name = signature(-ems)  # 1) 强签名：掉落物里出现 >=2 次的本名，最可靠
+        if not name:
+            # 2) 人工核对表：掉落物不带自己名字的少数几只。
+            #    必须排在编号兜底**之前**——否则编号会先命中一个错误的怪名
+            #    （实测 Ems=3 的编号位置是「爆鳞龙」，而它其实是精灵鹿）。
+            name = SMALL_NAME_OVERRIDES.get(ems, "")
+        if not name and isinstance(enemy_type, int):
+            # 3) 编号兜底：名字表位置 = enemy_type - 2。
+            # 该偏移是逐只核对出来的（对 13/16/19/25/26/27/29/34/39/40/41/42/43
+            # 等已验证条目全部成立）；本文件的 enemy_type 编号体系不统一，
+            # 没有通用公式，所以只在没有强签名与人工表时使用。
+            index = enemy_type - 2
+            if 0 <= index < len(names_by_index):
+                name = names_by_index[index]
+        if not name:
+            # 4) 弱签名：掉落物里出现过一次的已知怪名。放最后——
+            #    它容易抽到「巨大」「优质」这类通用词对应的怪，误判率高。
+            name = weak_signature(ems)
+        if not name:
+            name = f"小怪{ems}"
         info = {"name": name, "kind": "small"}
         habitats = decode_habitat(raw, mhrice, small=True)
         if habitats:
@@ -666,6 +665,31 @@ def is_internal_part_label(name: str) -> bool:
         return True
     # 纯数字/编号（例如 part_map 值为「10」「1」「5」）不是部位名
     return bool(name.isdigit())
+
+
+# 日文汉字 -> 简体，用于别名与怪物名的比对
+_JA_TO_ZH = str.maketrans({"竜": "龙", "龍": "龙", "獣": "兽", "鎧": "铠", "鎌": "镰"})
+
+
+def alias_matches_name(alias: str, name: str) -> bool:
+    """别名的汉字部分是否与怪物名自洽。
+
+    别名形如「雌火竜 リオレイア」「角竜 ディアブロス」。取开头的汉字段，
+    把日文汉字转成简体后与怪物名比较。返回 False 说明这个别名多半属于别的怪，
+    调用方应丢弃它——宁可少显示，也不要给用户错的名字。
+
+    例：别名「雌火竜」-> 雌火龙，与名字「雌火龙」一致 -> 保留；
+        别名「角竜」-> 角龙，而名字是「奇怪龙」 -> 丢弃。
+    """
+    if not alias or not name:
+        return False
+    head = re.match(r"^([\u4e00-\u9fff]+)", alias.strip())
+    if not head:
+        # 别名没有汉字开头（少见），无法校验，保守丢弃
+        return False
+    normalized = head.group(1).translate(_JA_TO_ZH)
+    cleaned = name.replace("・", "").replace(" ", "")
+    return normalized in cleaned or cleaned in normalized
 
 
 def part_group_map(random_ids: list, probabilities: list) -> list[str]:
@@ -1061,16 +1085,24 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
     # 用户查询时得到「没有找到」，而不是「这个素材没有掉落记录」。
     # 查不到来源是数据事实，应该照实展示，不该表现为「这个素材不存在」。
     MATERIAL_TYPES = {"Material", "OffcutsMaterial"}
+    # 掉落记录里出现过的物品 id —— 即使不是「素材」类型也必须进表。
+    # 踩过的坑：小动物会掉结算道具（丸鸟蛋 type=CarryPayOff）和消耗品
+    # （生肉、药草、怪物体液），这些被类型过滤挡掉后，掉落记录指向一个
+    # 不存在的物品，卡片上就出现**空白的素材名**（「掉落物 1个 100%」后面没字）。
+    referenced = {
+        str(entry["item_id"]) for entries in sources.values() for entry in entries
+    }
+
     items_out = {}
     no_source = 0
     for item_id, item in items_table.items():
         key = str(item_id)
-        if item["type"] not in MATERIAL_TYPES:
+        if item["type"] not in MATERIAL_TYPES and key not in referenced:
             continue
         entries = sources.get(key, [])
-        if not entries:
+        if not entries and item["type"] in MATERIAL_TYPES:
             no_source += 1
-        # 没有来源的（野外采集/小怪等）保持空列表，卡片会说明「未记录掉落来源」
+        # 没有来源的（野外采集等）保持空列表，卡片会说明「未记录掉落来源」
         items_out[key] = {
             "name": item["name"],
             "rarity": item["rarity"],
@@ -1079,7 +1111,8 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
         }
     print(
         f"  快照内素材: {len(items_out)}"
-        f"（其中 {no_source} 个没有掉落来源，属采集/特殊获取）"
+        f"（其中 {no_source} 个没有掉落来源，属采集/特殊获取；"
+        f"另含 {len(referenced)} 个掉落记录引用的非素材类物品）"
     )
 
     # 怪物只保留有掉落的，其余是环境生物

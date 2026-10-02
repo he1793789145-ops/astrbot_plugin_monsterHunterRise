@@ -150,32 +150,32 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
         )
 
     # 采集点（来自 Kiranico，仅部分素材有）
-    map_groups = material.gathering_by_map(MAX_GATHERING_MAPS)
+    map_groups = material.gathering_grouped(MAX_GATHERING_MAPS)
     if map_groups:
         lines = []
         for group in map_groups:
-            entries = group["entries"][:MAX_GATHERING_PER_MAP]
-            detail = "  ".join(
-                f"{point.get('rank') or ''} {point.get('chance') or ''}".strip()
-                for point in entries
-            )
-            extra = (
-                f" 等{len(group['entries'])}条"
-                if len(group["entries"]) > len(entries)
-                else ""
-            )
-            lines.append(
-                Line.of(
+            for rank in group["ranks"]:
+                outcomes = rank["outcomes"]
+                shown = outcomes[:MAX_GATHERING_PER_MAP]
+                segments = [
                     (group["map"], "body"),
-                    (f"   {detail}", "chance"),
-                    (extra, "muted"),
-                )
-            )
+                    (f" {rank['rank']}", "rank"),
+                    ("　", "muted"),
+                ]
+                for index, outcome in enumerate(shown):
+                    if index:
+                        segments.append(("  ", "muted"))
+                    segments.append((f"{outcome.get('chance') or ''}", "chance"))
+                    segments.append(("→", "muted"))
+                    segments.append((f"{outcome.get('quantity') or ''}", "body"))
+                if len(outcomes) > len(shown):
+                    segments.append((f" 等{len(outcomes)}条", "muted"))
+                lines.append(Line.of(*segments))
         sections.append(
             Section(
                 title="采集点",
                 lines=lines,
-                footer=f"共 {len(material.gathering)} 条采集记录",
+                footer="采集点分下位/上位/大师等级，来源数据未标注星级",
             )
         )
 
@@ -190,13 +190,22 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
             )
         )
     elif not groups:
-        # 没有怪物掉落，但有任务报酬/任务来源，提示一下免得用户以为信息缺失
+        # 没有怪物掉落，但还有别的途径：按实际存在的途径写说明，
+        # 不要写死成「见任务信息」——采集类素材可能只有采集点。
+        ways = []
+        if material.gathering:
+            ways.append("采集点")
+        if any(section.title == "任务报酬" for section in sections):
+            ways.append("任务报酬")
+        if any(section.title == "可刷任务" for section in sections):
+            ways.append("可刷任务")
+        hint = "、".join(ways) if ways else "其它途径"
         sections.append(
             Section(
                 title="说明",
                 lines=[
                     Line.of(
-                        ("该素材没有怪物掉落记录，获取途径见上面的任务信息。", "muted")
+                        (f"该素材没有怪物掉落记录，获取途径见上面的{hint}。", "muted")
                     )
                 ],
             )

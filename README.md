@@ -39,13 +39,31 @@
 
 ### 重新生成快照
 
-源数据更新（游戏版本更新、或你补充了数据）后重跑提取脚本即可，不需要改插件代码：
+**用 `tools/rebuild_snapshot.py`，不要单独跑 `extract.py`。**
+
+快照由三步依次叠加，顺序不能乱：
+
+| 步骤 | 脚本 | 写入 |
+|---|---|---|
+| 1 | `extract.py` | 基础表（**会重写整个快照**） |
+| 2 | `fetch_gathering.py` | `items[].gathering`（采集点，Kiranico） |
+| 3 | `fetch_habitats.py` | `monsters[].map_names`（栖息地图，gamecat） |
 
 ```
-python tools/extract.py --source-dir "D:\下载" --out "<AstrBot>/data/plugin_data/mh_material/snapshot.json"
+python tools/rebuild_snapshot.py
+python tools/rebuild_snapshot.py --out "<AstrBot>/data/plugin_data/mh_material/snapshot.json"
+python tools/rebuild_snapshot.py --skip-fetch    # 只跑第 1 步，离线可用
 ```
 
-可选参数：
+脚本跑完会**校验各数据块是否都在**（采集点 ≥40、栖息地图 ≥90、部位名 ≥500），
+不足会明确报出来。
+
+> ⚠️ **踩过的坑**：`extract.py` 会重写整个快照。如果只跑它 + 第 3 步而漏掉第 2 步，
+> 采集点数据会被静默抹掉——**没有任何报错**，卡片上只是安静地少了一节
+> （「散发土香的重泥骨」这类只能挖骨头堆获得的素材就会显示成「没有获取途径」）。
+> 这正是 `rebuild_snapshot.py` 存在的原因。
+
+单独跑 `extract.py` 时的可选参数：
 
 ```
 --mhrice <路径>     指定 mhrice.json
@@ -67,11 +85,12 @@ python tools/extract.py --source-dir "D:\下载" --out "<AstrBot>/data/plugin_da
 ### 采集点数据（来自 Kiranico）
 
 野外采集类素材（矿石、骨头、木桶等 47 种）的「地图 + 难度 + 概率」来自
-[mhrise.kiranico.com](https://mhrise.kiranico.com/zh/data/items?view=material)：
+[mhrise.kiranico.com](https://mhrise.kiranico.com/zh/data/items?view=material)。
+由 `rebuild_snapshot.py` 的第 2 步调用：
 
 ```
-python tools/fetch_gathering.py --out "<AstrBot>/data/plugin_data/mh_material/snapshot.json"
-python tools/fetch_gathering.py --probe      # 只探测几个素材，验证页面结构
+python tools/rebuild_snapshot.py                # 推荐：三步一起跑
+python tools/fetch_gathering.py --probe         # 只探测几个素材，验证页面结构
 ```
 
 脚本会并发抓取素材页（并发 3、每请求间隔 0.4s），原始结果缓存到
@@ -86,11 +105,12 @@ python tools/fetch_gathering.py --probe      # 只探测几个素材，验证页
 
 ### 怪物栖息地图（来自 gamecat.fun）
 
-「这只怪/小动物去哪张图找」来自 [gamecat.fun（游猫网）](https://gamecat.fun/rise/zh/)：
+「这只怪/小动物去哪张图找」来自 [gamecat.fun（游猫网）](https://gamecat.fun/rise/zh/)。
+由 `rebuild_snapshot.py` 的第 3 步调用：
 
 ```
-python tools/fetch_habitats.py --out "<AstrBot>/data/plugin_data/mh_material/snapshot.json"
-python tools/fetch_habitats.py --probe        # 只验证解析
+python tools/rebuild_snapshot.py                # 推荐：三步一起跑
+python tools/fetch_habitats.py --probe          # 只验证解析
 ```
 
 用 MediaWiki API 批量取怪物页「怪物简介」段的 `出现场地：` 字段（112 只怪物分 3 批，
@@ -140,6 +160,51 @@ python tools/fetch_habitats.py --probe        # 只验证解析
 
 **已知不确定项**：`em=131`（推出为「精灵鹿」）在源数据里没有掉落记录，
 无法用掉落物校验，可能与游戏内名称有出入。
+
+### 2b. 小动物名映射：曾经整体错位一位
+
+小动物（精灵鹿、丸鸟、野猪…）用独立的 `Ems` id 空间，名字同样要合成。曾经的做法是
+**按名字表位置逐条硬写一张覆盖表**，结果**整体错位一位**，37 只里 24 只贴错：
+
+| 现象 | 真实来源 |
+|---|---|
+| 「药草」被标成**毒狗龙**掉落 | 其实是**丸鸟** |
+| 「温暖的毛皮」被标成别人的 | 其实是**精灵鹿** |
+
+现行判定顺序（`build_monsters` 里的小动物分支）：
+
+1. **掉落物前缀强签名**（首选）——小动物掉自己的素材（「丸鸟的羽」→ 丸鸟），
+   同一前缀出现 ≥2 次才采信。这是游戏一手数据，实测 37 只里 30 只可判定。
+2. **`SMALL_NAME_OVERRIDES` 人工表**——必须排在编号兜底**之前**，否则编号会先
+   命中一个错误的怪名（实测 `Ems=3` 的编号位置是「爆鳞龙」，而它其实是精灵鹿）。
+3. **编号兜底**——名字表位置 = `enemy_type - 2`，该偏移对已验证条目成立，
+   但本文件的编号体系不统一，没有通用公式。
+4. **弱签名**（最后）——掉落物里出现一次的已知怪名。放最后是因为它容易抽到
+   「巨大」「优质」这类通用词对应的怪，误判率高。
+
+剩余无法用掉落物验证的 5 只（艾露猫/梅拉露、波波、砂鱼、变形幼冰鲨）已逐只人工核对：
+波波→「波波舌」、变形幼冰鲨→「鲛肌的鳞」。**艾露猫与梅拉露的掉落完全相同**
+（肉球印章、肉球优待券），只能按名字表顺序区分，属推断。
+
+### 2c. 别名（日文名）已全部停用
+
+`monster_aliases` 表与名字表**同样整体错位一位**：别名表下标 0 是「雌火竜」，
+对得上名字表下标 0 的「雌火龙」，但 `Alias_EnemyIndex001` 标的是
+「雌火竜 ヌシ・リオレイア」，按编号取会取到下一只怪的别名。
+
+逐条校验（把「竜→龙」归一后比对汉字）后，78 只里只剩极少数能自洽，
+且仍有「霸主・火龙」被当成「火龙」的错例。别名在卡片上只是装饰，
+**错的名字比没有更糟**，所以现在直接不输出。
+
+### 2d. 掉落物里的非素材类物品
+
+小动物会掉结算道具和消耗品（丸鸟蛋 `CarryPayOff`、生肉、药草、怪物体液）。
+早先快照只收录 `Material` / `OffcutsMaterial` 类型，这些物品被过滤掉后，
+掉落记录指向一个**不存在的 id**，卡片上就出现空白的素材名
+（「掉落物 1个 100%」后面没字）。
+
+现在**所有被掉落记录引用到的物品都会进表**（快照 1349 → 1384 项）。
+校验：6475 条掉落记录里解析不到物品名的为 **0 条**。
 
 ### 3. 部位破坏的部位名（部分可判定）
 

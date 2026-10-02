@@ -96,30 +96,49 @@ class MaterialInfo:
         """某只来源怪物的栖息地图（空列表表示数据缺失）。"""
         return self.monster_maps.get(monster_name) or []
 
-    def gathering_by_map(self, max_maps: int = 6) -> list[dict]:
-        """采集点按地图聚合，地图内按难度、概率排序。
+    def gathering_grouped(self, max_maps: int = 6) -> list[dict]:
+        """采集点按「地图 → 难度 → 产出」三级聚合。
 
-        返回 [{'map':..., 'entries':[...], 'best':35.0}, ...]
+        Kiranico 原始表是 `地图 | 难度 | 数量 | 概率` 四列、**没有表头**，
+        且同一「地图 + 难度」会出现多行——那是**不同的采集点或产出档位**
+        （页面没有标记能区分，见 fetch_gathering.parse_gathering 的说明）。
+
+        早先按「一行一个采集点」铺开，卡片上就成了
+        「水没林  大师等级 20%  大师等级 10%」：难度重复、数量丢了，
+        看起来像两个不明所以的百分比。这里改成三级结构，
+        让展示层能写成「难度：20% 得 ×1」这种自解释的形式。
+
+        返回 [{'map':..., 'ranks':[{'rank':..., 'outcomes':[...]}], 'best':...}, ...]
         """
         rank_order = {"下位": 0, "上位": 1, "大师等级": 2, "大师": 2}
-        buckets: dict[str, dict] = {}
+        maps: dict[str, dict] = {}
+
         for point in self.gathering:
             map_name = point.get("map") or "未知地图"
-            bucket = buckets.setdefault(
-                map_name, {"map": map_name, "entries": [], "best": 0.0}
+            rank = point.get("rank") or ""
+            chance = _chance_value(point.get("chance"))
+            entry = maps.setdefault(
+                map_name, {"map": map_name, "ranks": {}, "best": 0.0}
             )
-            bucket["entries"].append(point)
-            bucket["best"] = max(bucket["best"], _chance_value(point.get("chance")))
+            bucket = entry["ranks"].setdefault(rank, {"rank": rank, "outcomes": []})
+            bucket["outcomes"].append(
+                {
+                    "quantity": point.get("quantity") or "",
+                    "chance": point.get("chance") or "",
+                    "value": chance,
+                }
+            )
+            entry["best"] = max(entry["best"], chance)
 
-        ordered = sorted(buckets.values(), key=lambda b: (-b["best"], b["map"]))
-        for bucket in ordered:
-            bucket["entries"].sort(
-                key=lambda p: (
-                    rank_order.get(p.get("rank") or "", 9),
-                    -_chance_value(p.get("chance")),
-                )
+        ordered = sorted(maps.values(), key=lambda m: (-m["best"], m["map"]))[:max_maps]
+        for entry in ordered:
+            ranks = sorted(
+                entry["ranks"].values(), key=lambda r: rank_order.get(r["rank"], 9)
             )
-        return ordered[:max_maps]
+            for rank in ranks:
+                rank["outcomes"].sort(key=lambda o: -o["value"])
+            entry["ranks"] = ranks
+        return ordered
 
     def grouped_by_monster(self, max_monsters: int = 8) -> list[dict]:
         """按怪物聚合，按该怪物的最高概率降序；超出上限时截断。

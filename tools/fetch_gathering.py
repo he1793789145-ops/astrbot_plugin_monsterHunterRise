@@ -99,13 +99,25 @@ def parse_material_list(html: str) -> dict:
 
 
 def parse_gathering(html: str) -> list[dict]:
-    """解析「目的地」小节里的表格，返回 [{map, rank, quantity, chance}, ...]。"""
+    """解析「目的地」小节里的表格，返回 [{map, rank, quantity, chance}, ...]。
+
+    ## 这张表的已知情况（不要凭列名猜语义）
+
+    Kiranico 这张表**没有表头、也没有分组标记**（`colspan` 为 0），列为：
+    `地图 | 难度 | 数量 | 概率`。其中「难度」是**难度档位**（下位 / 上位 /
+    大师等级），**不是星级**——星级只出现在「任务」小节里。
+
+    同一个「地图 + 难度」会出现多行，例如大地结晶的废神社·下位有 4 行
+    （x1 30% / x2 20% / x1 10% / x2 40%）。这些行的**确切分组语义无法从页面
+    确定**：可能是不同的采集点（矿脉/骨堆），也可能是不同的产出档位。
+    页面没有任何标记能区分它们，所以这里**不做分组**，只如实取出四列，
+    由展示层写成「概率 得 数量」这种自解释的形式。
+    """
     index = html.find(SECTION_KEYWORD)
     if index < 0:
         return []
 
     section = html[index:]
-    # 只取到下一个二级标题为止，避免把后面的表格也吃进来
     next_heading = re.search(r"<h2", section[10:])
     if next_heading:
         section = section[: next_heading.start() + 10]
@@ -224,6 +236,11 @@ def main(argv=None) -> int:
         default=Path("gathering_cache.json"),
         help="原始抓取结果缓存，便于重跑不重复抓",
     )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="忽略缓存强制联网重抓（默认缓存优先）",
+    )
     args = parser.parse_args(argv)
 
     if args.probe:
@@ -233,28 +250,52 @@ def main(argv=None) -> int:
         print("错误：需要 --out 指定快照路径（或加 --probe 只探测）", file=sys.stderr)
         return 2
 
-    print("抓取素材列表页 ...")
-    listing = parse_material_list(fetch(LIST_URL))
-    print(f"  列表页解析到 {len(listing)} 个素材")
+    # ---- 缓存优先 ----
+    # 采集点数据变化极少，而站点可能限流/启用反爬。缓存够用就不联网，
+    # 需要更新时加 --refresh。这样 rebuild_snapshot.py 在离线环境也能跑通，
+    # 不会因为抓取失败把 extract.py 清空后的 gathering 字段留成空。
+    cached: dict = {}
+    try:
+        cached = (json.loads(args.cache.read_text(encoding="utf-8")) or {}).get(
+            "gathering"
+        ) or {}
+    except (OSError, json.JSONDecodeError):
+        cached = {}
 
-    gathered, failures = crawl(listing, args.limit)
+    if cached and not args.refresh:
+        print(f"使用缓存 {args.cache}（{len(cached)} 个素材）")
+        gathered = cached
+        failures: list = []
+    else:
+        print("抓取素材列表页 ...")
+        try:
+            listing = parse_material_list(fetch(LIST_URL))
+            print(f"  列表页解析到 {len(listing)} 个素材")
+            gathered, failures = crawl(listing, args.limit)
+        except (ValueError, OSError) as exc:
+            print(f"[警告] 抓取失败：{exc}", file=sys.stderr)
+            if cached:
+                print(f"[警告] 回退到缓存（{len(cached)} 个素材）", file=sys.stderr)
+            gathered, failures = cached, []
 
-    # 缓存原始结果
-    args.cache.write_text(
-        json.dumps(
-            {
-                "source": LIST_URL,
-                "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "gathering": gathered,
-                "failures": failures,
-            },
-            ensure_ascii=False,
-            indent=1,
-        ),
-        encoding="utf-8",
-    )
-    print(f"\n抓取完成：{len(gathered)} 个素材有采集点，{len(failures)} 个失败")
-    print(f"原始结果已缓存到 {args.cache}")
+    if gathered:
+        args.cache.write_text(
+            json.dumps(
+                {
+                    "source": LIST_URL,
+                    "fetched_at": datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    ),
+                    "gathering": gathered,
+                    "failures": failures,
+                },
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\n抓取完成：{len(gathered)} 个素材有采集点，{len(failures)} 个失败")
+        print(f"原始结果已缓存到 {args.cache}")
 
     # 合并进快照
     snapshot = json.loads(args.out.read_text(encoding="utf-8"))
