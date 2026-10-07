@@ -62,6 +62,36 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
     sections: list[Section] = []
     groups = material.grouped_by_monster(MAX_MONSTERS)
 
+    # 傀异调查（怪异调查）报酬。怪异化素材只在这里出现——`monster_lot` 里
+    # 完全没有它们，早先不读这张表，导致「怪异化的凶刚角」这类稀有度 9 的
+    # 素材查询结果显示「暂无掉落记录」。
+    if material.has_anomaly:
+        lines = []
+        for entry in material.anomaly_rewards[:MAX_MONSTERS]:
+            # 同一只怪在不同等级段概率可能不同（雷狼龙 161-199 是 35%、201+ 是 40%），
+            # 所以按段列出，不合并成一个数字
+            segments = entry.get("segments") or []
+            shown = segments[:4]
+            parts = []
+            for seg in shown:
+                low, high = seg.get("low"), seg.get("high")
+                level = f"Lv{low}" if low == high else f"Lv{low}–{high}"
+                parts.append(f"{level} {_fmt_chance(seg.get('chance'))}")
+            more = f" 等{len(segments)}段" if len(segments) > len(shown) else ""
+            lines.append(
+                Line.of(
+                    (entry.get("monster") or "", "body"),
+                    ("　", "muted"),
+                    ("，".join(parts), "chance"),
+                    (more, "muted"),
+                )
+            )
+        hidden = len(material.anomaly_rewards) - len(lines)
+        footer = "傀异调查（怪异调查）中剥取或部位破坏获得"
+        if hidden > 0:
+            footer += f"；另有 {hidden} 只怪异化怪物"
+        sections.append(Section(title="傀异调查", lines=lines, footer=footer))
+
     for group in groups:
         lines: list[Line] = []
         for entry in group["entries"][:MAX_ENTRIES_PER_MONSTER]:
@@ -179,7 +209,8 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
             )
         )
 
-    if not groups and not sections:
+    has_monster_source = bool(groups) or material.has_anomaly
+    if not has_monster_source and not sections:
         sections.append(
             Section(
                 title="暂无掉落记录",
@@ -189,7 +220,7 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
                 ],
             )
         )
-    elif not groups:
+    elif not has_monster_source:
         # 没有怪物掉落，但还有别的途径：按实际存在的途径写说明，
         # 不要写死成「见任务信息」——采集类素材可能只有采集点。
         ways = []

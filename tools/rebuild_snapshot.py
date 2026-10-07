@@ -53,7 +53,7 @@ def run(script: str, args: list[str]) -> int:
     return result.returncode
 
 
-def verify(path: Path) -> bool:
+def verify(path: Path, skip_fetch: bool = False) -> bool:
     """校验快照各数据块与两个附加数据源。"""
     data = json.loads(path.read_text(encoding="utf-8"))
     tables = data.get("tables") or {}
@@ -82,17 +82,25 @@ def verify(path: Path) -> bool:
     )
 
     print("\n[rebuild] 附加数据校验")
-    for label, count, minimum in (
-        ("采集点（Kiranico）", with_gathering, 40),
-        ("栖息地图（gamecat）", with_map, 90),
-        ("部位破坏部位名", with_part, 500),
-    ):
+    with_anomaly = sum(1 for v in items.values() if v.get("anomaly_rewards"))
+    checks = [("部位破坏部位名", with_part, 500), ("傀异调查报酬", with_anomaly, 50)]
+    if not skip_fetch:
+        # 这两项来自联网抓取。--skip-fetch 时本次没跑它们，不该判为失败
+        # （否则 --skip-fetch 永远报「不足」，掩盖真正的问题）。
+        checks = [
+            ("采集点（Kiranico）", with_gathering, 40),
+            ("栖息地图（gamecat）", with_map, 90),
+            *checks,
+        ]
+    for label, count, minimum in checks:
         flag = "OK " if count >= minimum else "不足"
         if count < minimum:
             ok = False
         print(f"  {flag} {label}: {count} 条素材/怪物（期望 >= {minimum}）")
+    if skip_fetch:
+        print("  （--skip-fetch：跳过联网数据项的校验）")
 
-    if with_gathering < 40:
+    if not skip_fetch and with_gathering < 40:
         print(
             "\n[rebuild] 提示：采集点数据缺失或过少，"
             "通常是漏跑了 fetch_gathering.py（它必须在 extract.py 之后执行）。"
@@ -147,7 +155,7 @@ def main(argv=None) -> int:
     ):
         return 1
 
-    ok = verify(out)
+    ok = verify(out, skip_fetch=args.skip_fetch)
     print(f"\n[rebuild] 快照：{out}")
     print(
         "[rebuild] 校验通过" if ok else "[rebuild] 校验未通过，请检查上面的『不足』项"

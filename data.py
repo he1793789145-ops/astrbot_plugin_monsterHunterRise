@@ -86,11 +86,32 @@ class MaterialInfo:
     monster_count: int = 0
     gathering: list[dict] = field(default_factory=list)
     monster_maps: dict[str, list[str]] = field(default_factory=dict)
+    # 傀异调查（怪异调查）里怪异化怪物的掉落。结构与 sources 不同：
+    # 它是「怪物 + 傀异等级区间 + 概率」，来自 mystery_reward_item 表。
+    anomaly_rewards: list[dict] = field(default_factory=list)
 
     @property
     def is_rare(self) -> bool:
         """稀有素材：稀有度 >= 7（玉/天鳞/秘棘一档）。"""
         return self.rarity >= 7
+
+    @property
+    def has_anomaly(self) -> bool:
+        return bool(self.anomaly_rewards)
+
+    def source_monster_names(self) -> list[str]:
+        """所有能给出该素材的怪物名（含傀异调查里的怪异化怪物）。
+
+        用于「来源怪物 N 只」这类计数——不然怪异化素材会显示成「来源怪物 0 只」，
+        而牌面上其实列着角龙、雷狼龙、千刃龙。
+        """
+        names = {entry.get("monster") for entry in self.sources if entry.get("monster")}
+        names |= {
+            entry.get("monster")
+            for entry in self.anomaly_rewards
+            if entry.get("monster")
+        }
+        return sorted(names)
 
     def maps_for(self, monster_name: str) -> list[str]:
         """某只来源怪物的栖息地图（空列表表示数据缺失）。"""
@@ -289,7 +310,12 @@ class Snapshot:
         if not item:
             return None
         sources = item.get("sources") or []
+        anomaly = item.get("anomaly_rewards") or []
+        # 来源怪物计数要把傀异调查里的怪异化怪物算进去，
+        # 否则怪异化素材会显示「来源怪物 0 只」却列着一堆怪物。
         monsters = {s.get("monster") for s in sources}
+        monsters |= {a.get("monster") for a in anomaly}
+        monsters.discard(None)
         return MaterialInfo(
             item_id=str(item_id),
             name=item.get("name") or "",
@@ -299,6 +325,7 @@ class Snapshot:
             monster_count=len(monsters),
             gathering=item.get("gathering") or [],
             monster_maps=self._maps_by_monster_name(),
+            anomaly_rewards=anomaly,
         )
 
     def _maps_by_monster_name(self) -> dict[str, list[str]]:

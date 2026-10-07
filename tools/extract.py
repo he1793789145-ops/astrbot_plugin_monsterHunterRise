@@ -552,6 +552,117 @@ def build_drop_tokens(mhrice: dict, items: dict) -> dict:
     return tokens
 
 
+def build_anomaly_rewards(mhrice: dict, items: dict, monster_names: dict) -> dict:
+    """提取「傀异调查（怪异调查）」里怪异化怪物的掉落。
+
+    这是**独立于 monster_lot 的一套报酬表**，`monster_lot` 里完全没有这些素材。
+    踩过的坑：早先只读 `monster_lot` / `monster_lot_mr`，于是所有怪异化素材
+    （怪异化的凶刚角 等，稀有度 9）都查不到任何来源，卡片显示「暂无掉落记录」。
+
+    源表 `mystery_reward_item.param` 每条形如::
+
+        {"em_type": {"Em": 7}, "lv_lower_limit": 161, "lv_upper_limit": 199,
+         "hagibui_probability": 40, "reward_item": {"Normal": 2911},
+         "item_num": 1, "is_special_mystery": false}
+
+    即「某只怪异化怪物，在某个傀异等级区间内，以某概率掉落某素材」。
+    返回 {item_id: [记录, ...]}，记录按怪物聚合并合并连续等级区间。
+    """
+    table = mhrice.get("mystery_reward_item") or {}
+    params = table.get("param") if isinstance(table, dict) else None
+    if not isinstance(params, list):
+        return {}
+
+    # 先按 (item_id, em) 收集等级区间
+    grouped: dict[int, dict] = {}
+    for entry in params:
+        if not isinstance(entry, dict):
+            continue
+        reward = entry.get("reward_item")
+        item_id = reward.get("Normal") if isinstance(reward, dict) else None
+        if not isinstance(item_id, int):
+            continue
+        em = (entry.get("em_type") or {}).get("Em")
+        if not isinstance(em, int):
+            continue
+        low = entry.get("lv_lower_limit")
+        high = entry.get("lv_upper_limit")
+        if not isinstance(low, int) or not isinstance(high, int):
+            continue
+        probability = entry.get("hagibui_probability")
+        quantity = entry.get("item_num")
+
+        per_item = grouped.setdefault(item_id, {})
+        per_monster = per_item.setdefault(em, {"segments": []})
+        per_monster["segments"].append(
+            {
+                "low": low,
+                "high": high,
+                "chance": float(probability)
+                if isinstance(probability, (int, float))
+                else 0.0,
+                "quantity": quantity if isinstance(quantity, int) else 0,
+                "is_special": bool(entry.get("is_special_mystery")),
+            }
+        )
+
+    def merge_segments(segments: list[dict]) -> list[dict]:
+        """合并「等级区间相邻且概率/数量相同」的段。
+
+        例如 201-219 / 220-220 / 221-260 三段概率都是 40%，合并成 201-260；
+        300-300 的特殊条目与 161-300 概率相同，也一并并掉。
+        但概率不同的段**绝不合并**——雷狼龙 161-199 是 35%、201+ 是 40%，
+        合并后取最大值会把 35% 那段误报成 40%。
+
+        `is_special_mystery` 不参与比较：它只标记「特殊傀异」这类玩法差异，
+        不影响掉落概率，若参与比较会产生「Lv161-300 40%，Lv300 40%」这种冗余行。
+        """
+        ordered = sorted(
+            segments, key=lambda s: (s["low"], s["high"], s["chance"], s["quantity"])
+        )
+        merged: list[dict] = []
+        for seg in ordered:
+            if (
+                merged
+                and seg["low"] <= merged[-1]["high"] + 1
+                and seg["chance"] == merged[-1]["chance"]
+                and seg["quantity"] == merged[-1]["quantity"]
+            ):
+                merged[-1]["high"] = max(merged[-1]["high"], seg["high"])
+            else:
+                merged.append(dict(seg))
+        return merged
+
+    result: dict[int, list[dict]] = {}
+    for item_id, per_item in grouped.items():
+        records = []
+        for em, info in per_item.items():
+            segments = merge_segments(info["segments"])
+            records.append(
+                {
+                    "em": em,
+                    "monster": monster_names.get(str(em), f"Em{em}"),
+                    "segments": [
+                        {
+                            "low": s["low"],
+                            "high": s["high"],
+                            "chance": s["chance"],
+                            "quantity": s["quantity"],
+                            "is_special": s["is_special"],
+                        }
+                        for s in segments
+                    ],
+                    "level_min": min(s["low"] for s in segments),
+                    "level_max": max(s["high"] for s in segments),
+                    "chance": max(s["chance"] for s in segments),
+                }
+            )
+        # 等级门槛低的排前面（更容易达成的先看到），再按概率降序
+        records.sort(key=lambda r: (r["level_min"], -r["chance"], r["monster"]))
+        result[item_id] = records
+    return result
+
+
 def build_item_table(items_json: dict) -> dict:
     """items.json: id -> {name, rarity, type}。"""
     table = {}
@@ -1078,6 +1189,17 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
             entry["monster"] = name
         entries.sort(key=lambda e: (-e["chance"], e["kind"]))
 
+    # 傀异调查（怪异调查）报酬：来自 mystery_reward_item，独立于 monster_lot。
+    # 不并进 sources/monster_drops —— 那些是「难度 + 方式 + 概率」的结构，
+    # 傀异调查是「怪物 + 等级区间 + 概率」，硬塞进去会破坏两边的语义。
+    anomaly_rewards = build_anomaly_rewards(
+        mhrice, items_table, {em: info["name"] for em, info in monsters.items()}
+    )
+    print(
+        f"  傀异调查报酬: {len(anomaly_rewards)} 个素材、"
+        f"{sum(len(v) for v in anomaly_rewards.values())} 条怪物记录"
+    )
+
     # 纳入**全部素材类物品**，而不是只保留「查得到来源」的那些。
     #
     # 踩过的坑：这里先后用「有怪物掉落」和「有怪物掉落或任务报酬」当过滤条件，
@@ -1092,6 +1214,8 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
     referenced = {
         str(entry["item_id"]) for entries in sources.values() for entry in entries
     }
+    # 傀异调查报酬引用的素材同样要收进来
+    referenced |= {str(item_id) for item_id in anomaly_rewards}
 
     items_out = {}
     no_source = 0
@@ -1100,7 +1224,12 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
         if item["type"] not in MATERIAL_TYPES and key not in referenced:
             continue
         entries = sources.get(key, [])
-        if not entries and item["type"] in MATERIAL_TYPES:
+        # 有傀异调查报酬但没进 sources 的，也不算「没有来源」
+        if (
+            not entries
+            and not anomaly_rewards.get(item_id)
+            and item["type"] in MATERIAL_TYPES
+        ):
             no_source += 1
         # 没有来源的（野外采集等）保持空列表，卡片会说明「未记录掉落来源」
         items_out[key] = {
@@ -1108,6 +1237,7 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
             "rarity": item["rarity"],
             "type": item["type"],
             "sources": entries,
+            "anomaly_rewards": anomaly_rewards.get(item_id, []),
         }
     print(
         f"  快照内素材: {len(items_out)}"

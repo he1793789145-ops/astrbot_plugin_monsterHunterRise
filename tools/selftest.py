@@ -39,16 +39,30 @@ QUERIES = [
     ("素材", "大地结晶"),  # 采集类素材：应有「采集点」小节
     ("素材", "妖辉石"),  # 仅任务报酬 + 采集点
     ("素材", "温暖的毛皮"),  # 小动物掉落：应标出精灵鹿/雪鹿与出现地图
+    ("素材", "药草"),  # 小动物掉落归属：应显示丸鸟（曾经错标成毒狗龙）
+    ("素材", "怪异化的凶刚角"),  # 傀异调查报酬：曾经显示「暂无掉落记录」
+    ("素材", "怪异化的重骨"),  # 傀异调查报酬
     ("怪物", "爵银龙"),
     ("怪物", "爆鳞龙"),
     ("怪物", "精灵鹿"),  # 小动物：应有「出现地图」小节
     ("怪物", "野猪"),
+    ("怪物", "丸鸟"),
     ("任务", "撕裂寂静者"),
     ("help", ""),
     ("素材", ""),
     ("不存在的子命令", ""),
     ("素材", "绝对不存在的素材名"),
 ]
+
+# 这些查询的结果必须包含指定小节/关键词，否则视为回归。
+# 每一条都对应一个真实修过的 bug。
+REQUIRED_SECTIONS = {
+    "药草": ["丸鸟"],
+    "怪异化的凶刚角": ["傀异调查", "Lv161"],
+    "怪异化的重骨": ["傀异调查"],
+    "大地结晶": ["采集点"],
+    "温暖的毛皮": ["精灵鹿"],
+}
 
 
 def main(argv=None) -> int:
@@ -113,6 +127,24 @@ def main(argv=None) -> int:
         else:
             print("  [空结果]")
             failures += 1
+
+        # 回归断言：这些查询必须包含指定小节/关键词
+        required = REQUIRED_SECTIONS.get(argument)
+        if required and result.card:
+            haystack = "\n".join(
+                section.title
+                + "\n"
+                + "\n".join(
+                    "".join(s for s, _ in line.segments) for line in section.lines
+                )
+                for section in result.card.sections
+            )
+            for keyword in required:
+                if keyword in haystack:
+                    print(f"  [通过] 含「{keyword}」")
+                else:
+                    print(f"  [失败] 缺少「{keyword}」")
+                    failures += 1
         print()
 
     print(f"自测完成，异常/空结果 {failures} 项")
