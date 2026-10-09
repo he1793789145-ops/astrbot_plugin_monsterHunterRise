@@ -66,12 +66,46 @@ QUEST_TYPE_LABELS = {
     "SPECIAL": "特殊",
 }
 
-# 部位组奖品的分段大小。
+# 每种掉落方式的「每个类型占多少槽」。
 #
-# `parts_break_reward_*_list` 是「部位组数 × 20」的扁平数组，按组分段：
-# 组 i 的奖品落在下标 [i*20, (i+1)*20)。实测爵银龙 3 组 × 20 = 60 项，
-# 组 0 的概率在索引 0~2、组 1 在 10~11、组 2 在 20~21，与该规律吻合。
-PARTS_GROUP_SIZE = 20
+# 关键结构（此前理解错了，导致部位名只覆盖 59%）：
+#   `{kind}_item_id_list` 的长度 = **类型列长度 × 10**，每个类型固定占 10 槽。
+#   类型列是同一个行里的另一个字段：
+#     parts_break_reward -> parts_break_list（RandomId，部位身份）
+#     hagitory_reward    -> enemy_reward_type_list（MainBody / PartsLoss1 …）
+#     drop_reward        -> drop_reward_type_list（DropItem / DropItem2 …）
+#     target/capture/otomo -> 无类型列，即 1 个类型
+#
+# 实测六种方式在全部 248 行上都满足「长度 == 类型数 × 10」，无一例外。
+#
+# 踩过的坑：早先把类型列里的 `"None"` 占位符过滤掉再算组数，于是
+# 爵银龙 3 个有效部位被当成「3 组 × 20 槽」，伞鸟 4 个被当成「4 组 × 15 槽」，
+# 只能靠反推猜分段，部位名覆盖只有 59%。保留 "None" 占位符后，
+# 组数取类型列全长、槽宽恒为 10，一切自洽。
+SLOTS_PER_TYPE = 10
+
+# 剥取来源（enemy_reward_type_list）-> 中文标签。
+# 实测：MainBody 是本体剥取；PartsLoss1 的首个物品名 79/95 含「尾」
+# （其余是「雌火龙的棘」这类同样来自尾巴的素材），故为**尾巴剥取**；
+# PartsLoss2 实测为土砂龙的头壳/背甲，属另一个可切断部位。
+CARVE_TYPE_LABELS = {
+    "MainBody": "本体",
+    "PartsLoss1": "尾巴",
+    "PartsLoss2": "切断部位",
+    "Unique1": "特殊",
+}
+
+# 掉落物来源（drop_reward_type_list）-> 中文标签。
+# DropItem/DropItem2… 是不同掉落条件（打击掉落、环境掉落等），
+# 源数据没有可读名字，统一显示为「掉落物」。
+DROP_TYPE_LABELS = {
+    "DropItem": "",
+    "DropItem2": "",
+    "DropItem3": "",
+    "DropItem4": "",
+    "DropItem5": "",
+    "DropItem6": "",
+}
 
 # 部位名（游戏数据里是日文）-> 中文。
 # 取自 `monsters[].collider_mapping.part_map` 的实际用词，只翻译常见部位；
@@ -720,13 +754,102 @@ def _item_id_at(sequence, index):
     return None
 
 
+def build_official_part_names(mhrice: dict) -> dict:
+    """em -> {RandomId: 官方中文部位名}，来自 `parts_type` + `hunter_note_msg`。
+
+    **只在 `part_map` 查不到时兜底**。`parts_type` 的 text 是 GUID，要在
+    消息表的 `entries[].guid` 里查出文本（查到的是「头部 / 尾巴 / 翼足 / 背鳍…」
+    这类官方用词）。按 monster 的 `enemy_type` 过滤后确定该怪用哪个词。
+
+    为什么不与 `part_map` 竞争：实测有冲突个例——爵银龙 `RandomId=5`
+    在 `part_map` 里是「翼」，`parts_type` 却给「手臂」。`part_map` 是逐怪数据
+    且与掉落内容吻合（刚翼 -> 翼），所以以它为准，`parts_type` 只补空缺。
+    """
+    # 1) GUID -> 文本（扫描所有消息表的 entries）
+    guid_text: dict[str, str] = {}
+    for table in mhrice.values():
+        if not isinstance(table, dict):
+            continue
+        entries = table.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            guid = entry.get("guid")
+            if not isinstance(guid, str):
+                continue
+            content = entry.get("content") or []
+            text = (
+                content[13]
+                if len(content) > 13 and content[13]
+                else (content[0] if content else "")
+            )
+            if text:
+                guid_text.setdefault(guid.lower(), text)
+    if not guid_text:
+        return {}
+
+    # 2) (enemy_type, RandomId) -> 名称
+    by_enemy: dict[tuple[int, int], str] = {}
+    table = mhrice.get("parts_type") or {}
+    params = table.get("params") if isinstance(table, dict) else None
+    for entry in params or []:
+        if not isinstance(entry, dict):
+            continue
+        random_id = (entry.get("broken_parts_types") or {}).get("RandomId")
+        if not isinstance(random_id, int):
+            continue
+        for info in entry.get("text_infos") or []:
+            name = ""
+            for field in ("text", "text_for_monster_list"):
+                guid = info.get(field)
+                if isinstance(guid, str) and guid.lower() in guid_text:
+                    name = guid_text[guid.lower()]
+                    break
+            if not name:
+                continue
+            for enemy in info.get("enemy_type_list") or []:
+                em = (enemy or {}).get("Em")
+                if isinstance(em, int):
+                    by_enemy.setdefault((em, random_id), name)
+
+    # 3) 按敌人类型归属到怪物：em -> enemy_type
+    enemy_type_of = {}
+    for raw in mhrice.get("monsters") or []:
+        em = (raw.get("em_type") or {}).get("Em")
+        enemy_type = raw.get("enemy_type")
+        if isinstance(em, int) and isinstance(enemy_type, int):
+            enemy_type_of[em] = enemy_type
+
+    result: dict = {}
+    for em, enemy_type in enemy_type_of.items():
+        names = {}
+        for (enemy, random_id), name in by_enemy.items():
+            if enemy == enemy_type:
+                names[str(random_id)] = name
+        if names:
+            result[em] = names
+    return result
+
+
 def build_part_names(mhrice: dict) -> dict:
     """em / Ems -> {RandomId: 部位中文名}。
 
     部位名取自 `monsters[].collider_mapping.part_map`（游戏内日文名），
-    按 `PART_NAME_ZH` 翻成中文；未收录的词保留原文。
-    `RandomId` 就是 `part_map` 的键（实测 40 只怪里 32 只完全吻合，
-    其余是 65535 之类的特殊值，查不到就返回空）。
+    按 `PART_NAME_ZH` 翻成中文。
+
+    键来自 `part_map`；`parts_break_list` 里的 `RandomId` 就是这些键
+    （个别怪会给出 65535 这类特殊值，查不到就留空）。
+
+    ## 关于清洗而不是丢弃
+
+    源数据里同一个部位有多种写法：
+
+        頭部 / 頭部_ダメージアタリ / ダメージ部位00　頭 / Group0_頭 / damage_胴
+
+    早先把带 `ダメージ`/`Group`/`damage` 字样的**整条丢掉**，于是伞鸟这类
+    只有内部写法的怪完全没有部位名，部位细分率被压到 61%。
+    现在改成**先清洗出其中的汉字部位词**（`ダメージ部位00　頭` -> `頭`），
+    只有确实提炼不出部位词时才丢弃。
     """
     result: dict = {}
     for raw in (mhrice.get("monsters") or []) + (mhrice.get("small_monsters") or []):
@@ -737,35 +860,87 @@ def build_part_names(mhrice: dict) -> dict:
         part_map = (raw.get("collider_mapping") or {}).get("part_map") or {}
         if not isinstance(part_map, dict):
             continue
-        names: dict[str, str] = {}
+        # 同一个 em 可能有多条怪兽记录（基础种/变体），**合并而不是覆盖**。
+        # 踩过的坑：早先直接 result[key] = names，后一条记录会覆盖前一条，
+        # 于是角龙、妃蜘蛛这些本来有完整 part_map 的怪反而没有部位名。
+        names = result.setdefault(key, {})
         for random_id, values in part_map.items():
             if not isinstance(values, list) or not values:
                 continue
-            raw_name = str(values[0]).strip()
-            if not raw_name:
-                continue
-            # 过滤掉非部位名（受击判定体、伤害区域、Group 前缀等内部标记），
-            # 这些显示出来对用户没有意义，而且会混进日文
-            if is_internal_part_label(raw_name):
-                continue
-            names[str(random_id)] = PART_NAME_ZH.get(raw_name, raw_name)
-        if names:
-            result[key] = names
-    return result
+            cleaned = clean_part_label(str(values[0]).strip())
+            translated = translate_part(cleaned) if cleaned else ""
+            # 已有更好（非空）的名字时不覆盖
+            if translated and not names.get(str(random_id)):
+                names[str(random_id)] = translated
+
+    # 用官方名表补 part_map 查不到的空缺（只补空，不覆盖）
+    for em, official in build_official_part_names(mhrice).items():
+        names = result.setdefault(em, {})
+        for random_id, name in official.items():
+            if name and not names.get(random_id):
+                names[random_id] = name
+
+    return {key: names for key, names in result.items() if names}
 
 
-# 内部标记：不是真正的部位名，显示出来会让用户困惑
+# 内部标记：出现在部位名里但本身不是部位词的前后缀
 _INTERNAL_PART_MARKERS = (
     "ダメージアタリ",
     "ダメージ部位",
     "damage",
     "Damage",
     "Group",
+    "Gropu",  # 源数据里的拼写错误（人鱼龙等），一并当内部前缀处理
     "シェル弾き",
     "EmHitDamage",
     "アタリ",
     "部位分け",
 )
+
+# 内部前缀/后缀，清洗时剥掉。`Gropu` 是源数据的拼写错误，必须一起处理，
+# 否则 `Gropu5_左脚` 会原样漏到卡片上。
+_INTERNAL_AFFIX = re.compile(
+    r"^(?:ダメージ部位|ダメージアタリ|Group|group|Gropu|gropu|damage|Damage)\d*[_　\s：:]*"
+    r"|[_　\s：:]*(?:ダメージ部位|ダメージアタリ|Group|group|Gropu|gropu|damage|Damage|部位分け)\d*$"
+)
+
+
+def clean_part_label(name: str) -> str:
+    """从内部写法里提炼出部位词；提炼不出就返回空字符串。
+
+    `ダメージ部位00　頭` -> `頭`；`Group0_頭` -> `頭`；`頭部_ダメージアタリ` -> `頭部`；
+    `damage_頭部` -> `頭部`；`Gropu5_左脚` -> `左脚`；
+    纯 `EmHitDamageRSData` / 纯 `Group0` / 纯数字 -> ``
+    """
+    text = (name or "").strip()
+    if not text:
+        return ""
+    text = _INTERNAL_AFFIX.sub("", text).strip("_　 ：:")
+    if not text or text.isdigit():
+        return ""
+    # 仍残留内部词：只取其中的汉字片段（部位词都是汉字）
+    if any(marker in text for marker in _INTERNAL_PART_MARKERS):
+        match = re.search(r"[\u4e00-\u9fff]+", text)
+        text = match.group(0) if match else ""
+    return text
+
+
+def translate_part(name: str) -> str:
+    """日文部位词 -> 中文；**翻不出来就返回空**（绝不把日文显示给用户）。
+
+    先精确匹配，再按「最长已知词」做包含匹配，
+    这样 `デブ時頭`（河童蛙的膨胀状态头部）能落到 `头部`。
+    """
+    if not name:
+        return ""
+    if name in PART_NAME_ZH:
+        return PART_NAME_ZH[name]
+    best = ""
+    for japanese, chinese in PART_NAME_ZH.items():
+        if japanese and japanese in name and len(japanese) > len(best):
+            best = japanese
+            best_zh = chinese
+    return best_zh if best else ""
 
 
 def is_internal_part_label(name: str) -> bool:
@@ -803,58 +978,48 @@ def alias_matches_name(alias: str, name: str) -> bool:
     return normalized in cleaned or cleaned in normalized
 
 
-def part_group_map(random_ids: list, probabilities: list) -> list[str]:
-    """返回「每个下标属于哪个部位组」的映射（下标 -> 组序号）。
+def source_type_labels(kind: str, row: dict, part_lookup: dict) -> list[str]:
+    """取「这一行的每个类型叫什么」，用于把奖品细分到具体部位/来源。
 
-    ## 为什么需要判定而不是写死公式
-
-    `parts_break_reward_*_list` 是「部位组 × 每组若干项」的扁平数组，但
-    **布局在不同怪物之间并不一致**，实测两种：
-
-    * **连续分段**：爵银龙 60 项 / 3 组 = 每组 20，奖品落在
-      `[0,1,2] [10,11] [20,21]` —— 组下标 = `i // 20`；
-    * **另一种**：伞鸟 60 项 / 4 组，奖品落在 `[0,1,2] [10] [20] [30]`
-      —— 组下标 = `i // 10`（= 长度 / (组数+2)）。
-
-    所以这里把候选的「每组项数」都试一遍，取**能覆盖最多部位组**的那个；
-    没有一个候选能覆盖全部组时返回空表（宁可不说，也不给错部位）。
+    返回的类型数与 `{kind}_item_id_list` 的类型数一致；
+    下标 i 的奖品属于类型 `i // SLOTS_PER_TYPE`。
+    空字符串表示该类型没有可读名字（例如未收录的部位名）。
     """
-    group_count = len(random_ids)
-    total = len(probabilities)
-    if group_count <= 0 or total <= 0:
-        return []
+    if kind == "parts_break_reward":
+        labels = []
+        for entry in row.get("parts_break_list") or []:
+            random_id = entry.get("RandomId") if isinstance(entry, dict) else None
+            labels.append(
+                part_lookup.get(str(random_id), "") if random_id is not None else ""
+            )
+        return labels
+    if kind == "hagitory_reward":
+        return [
+            CARVE_TYPE_LABELS.get(value, "")
+            for value in (row.get("enemy_reward_type_list") or [])
+        ]
+    if kind == "drop_reward":
+        return [
+            DROP_TYPE_LABELS.get(value, "")
+            for value in (row.get("drop_reward_type_list") or [])
+        ]
+    return []
 
-    nonzero = [i for i, p in enumerate(probabilities) if p]
-    if not nonzero:
-        return []
 
-    best_slice: list[int] | None = None
-    best_covered = -1
-    # 候选：完全均分，以及「多了表头/尾项」的几种常见写法
-    for divisor in range(group_count, group_count + 4):
-        if total % divisor:
-            continue
-        size = total // divisor
-        if size <= 0:
-            continue
-        mapping = [min(i // size, group_count - 1) for i in range(total)]
-        covered = len({mapping[i] for i in nonzero})
-        if covered > best_covered:
-            best_covered, best_slice = covered, mapping
+def compose_kind_label(kind: str, base_label: str, detail: str) -> str:
+    """把「方式 + 细分」拼成给用户看的标签。
 
-    # 交错布局（index % 组数）作为并列候选
-    interleaved = [i % group_count for i in range(total)]
-    covered = len({interleaved[i] for i in nonzero})
-    if covered > best_covered:
-        best_covered, best_slice = covered, interleaved
-
-    if best_slice is None or best_covered < 2:
-        # 连两个组都分不出来，说明布局无法判定：不猜
-        return []
-    if best_covered < group_count:
-        # 只能覆盖部分组，仍然比全错好，但只用于下标能确定的那些项
-        pass
-    return best_slice
+    * 部位破坏 + 头部 -> 头部破坏
+    * 剥取     + 尾巴 -> 尾巴剥取
+    * 掉落物 / 目标报酬等没有细分，保持原样
+    """
+    if not detail:
+        return base_label
+    if kind == "parts_break_reward":
+        return f"{detail}破坏"
+    if kind == "hagitory_reward":
+        return f"{detail}剥取"
+    return base_label
 
 
 def build_drops(
@@ -870,21 +1035,7 @@ def build_drops(
     part_names = part_names or {}
 
     for em, rank, row in iter_lot_rows(mhrice):
-        # 部位破坏的奖品按「部位组」分段，先定出每个下标属于哪个组
-        break_parts: list[str] = []
-        group_of_index: list[int] = []
-        if part_names:
-            random_ids = [
-                (entry or {}).get("RandomId")
-                for entry in (row.get("parts_break_list") or [])
-                if isinstance(entry, dict)
-            ]
-            lookup = part_names.get(abs(em)) or {}
-            break_parts = [lookup.get(str(rid), "") for rid in random_ids]
-            if random_ids and break_parts:
-                group_of_index = part_group_map(
-                    random_ids, row.get("parts_break_reward_probability_list") or []
-                )
+        part_lookup = part_names.get(abs(em)) or {}
 
         for kind, label in SOURCE_KINDS:
             id_list = row.get(f"{kind}_item_id_list")
@@ -892,12 +1043,7 @@ def build_drops(
                 continue
             num_list = row.get(f"{kind}_num_list") or []
             prob_list = row.get(f"{kind}_probability_list") or []
-            # 部位破坏带部位枚举，一并存下，免得以后要用还得重跑
-            part_list = (
-                row.get("parts_break_reward_type_list")
-                if kind == "parts_break_reward"
-                else None
-            )
+            type_labels = source_type_labels(kind, row, part_lookup)
 
             for index in range(len(id_list)):
                 item_id = _item_id_at(id_list, index)
@@ -908,6 +1054,14 @@ def build_drops(
                 if not isinstance(probability, (int, float)) or probability <= 0:
                     continue
                 quantity = num_list[index] if index < len(num_list) else 0
+
+                # 类型下标：每个类型固定 SLOTS_PER_TYPE 槽
+                detail = ""
+                if type_labels:
+                    group_index = index // SLOTS_PER_TYPE
+                    if group_index < len(type_labels):
+                        detail = type_labels[group_index]
+
                 record = {
                     "item_id": item_id,
                     "em": em,
@@ -915,26 +1069,183 @@ def build_drops(
                     "rank": rank,
                     "rank_label": RANK_LABELS.get(rank, rank),
                     "kind": kind,
-                    "kind_label": label,
+                    "kind_label": compose_kind_label(kind, label, detail),
+                    "source_detail": detail,
                     "quantity": int(quantity or 0),
                     "chance": float(probability),
                 }
-                if part_list and index < len(part_list):
-                    record["part"] = part_list[index]
-                # 部位破坏：按判定出的分组映射取名
-                if (
-                    kind == "parts_break_reward"
-                    and break_parts
-                    and index < len(group_of_index)
-                ):
-                    group_index = group_of_index[index]
-                    if group_index < len(break_parts) and break_parts[group_index]:
-                        record["part_name"] = break_parts[group_index]
-
                 sources.setdefault(str(item_id), []).append(dict(record))
                 monster_drops.setdefault(str(em), []).append(dict(record))
 
     return sources, monster_drops
+
+
+# 采集点类别（pop_category）-> 中文节点名。
+#
+# 每一个都是按该类别下实际出现的物品**核对过**的：
+#   5 -> 灵鹤石/铁矿石/大地结晶（矿脉）
+#   6 -> 厚重龙骨/扭曲的重怪骨/龙骨【小】（骨冢）
+#   1 -> 药草/解毒草/火药草    2 -> 蓝蘑菇/硝化伞菇    3 -> 苦虫/光虫
+#   4 -> 怪力种子/打消果实     11 -> 特产菇/竹笋/酸浆  13 -> 大木桶/炸药
+# 源数据没有给出这些类别的官方名字（map_icon_list 的 GUID 解析出来是
+# **物品名与说明**，不是节点名），所以这里用核对后的描述性名称。
+NODE_NAMES = {
+    1: "药草",
+    2: "蘑菇",
+    3: "捕虫点",
+    4: "果实",
+    5: "矿脉",
+    6: "骨冢",
+    7: "蜂巢",
+    8: "蜘蛛网",
+    10: "粪堆",
+    11: "特产",
+    12: "团子素材",
+    13: "木桶",
+    14: "古老手记",
+    16: "巢穴",
+}
+
+
+def node_name(category) -> str:
+    if not isinstance(category, int):
+        return "采集点"
+    return NODE_NAMES.get(category, f"采集点{category}")
+
+
+def build_gathering_nodes(mhrice: dict, map_names: dict) -> dict:
+    """野外采集点：素材 -> [{map, node, rank, quantity, chance}]。
+
+    ## 数据来源（全部是游戏本体数据，无需联网抓网站）
+
+    * `item_pop_lot.param` —— 每条 = **(pop_id, field_type)** 一组采集掉落：
+        - `pop_id`    采集点类型 id（同一类型在多张图出现，故有多条）
+        - `field_type` **就是地图号**；`-1` 表示该类型在这些图上共用一套掉落
+        - `lower_*` / `upper_*` / `master_*` 分别是下位/上位/大师的物品、数量、概率
+    * `maps[地图号].pops[].kind.Item.behavior` —— 给出 `pop_id` 出现在哪些地图，
+      以及 `pop_category`（节点类型）。
+
+    ## 为什么这么重要
+
+    早先采集点数据来自 Kiranico 抓取，**只有地图名、没有节点类型**，
+    于是「散发土香的重泥骨」只能回答「水没林」，答不出「水没林的骨冢」。
+    游戏数据本身就有节点信息与**逐地图**的掉落，实测与 Kiranico 数值完全一致
+    （重泥骨：水没林·大师 20% x1 / 10% x2），而且覆盖更全（180 项 vs 47 项）。
+    """
+    table = mhrice.get("item_pop_lot") or {}
+    params = table.get("param") if isinstance(table, dict) else None
+    if not isinstance(params, list):
+        return {}
+
+    # 1) pop_id -> 地图集合 / 节点类别
+    pop_maps: dict[int, set[int]] = {}
+    pop_categories: dict[int, set[int]] = {}
+    maps_table = mhrice.get("maps")
+    if isinstance(maps_table, dict):
+        for map_no, map_data in maps_table.items():
+            if not isinstance(map_data, dict):
+                continue
+            try:
+                map_number = int(map_no)
+            except (TypeError, ValueError):
+                continue
+            for entry in map_data.get("pops") or []:
+                kind = (entry.get("kind") or {}).get("Item")
+                if not isinstance(kind, dict):
+                    continue
+                behavior = kind.get("behavior") or {}
+                pop_id = behavior.get("pop_id")
+                if not isinstance(pop_id, int):
+                    continue
+                pop_maps.setdefault(pop_id, set()).add(map_number)
+                category = behavior.get("pop_category")
+                if isinstance(category, int):
+                    pop_categories.setdefault(pop_id, set()).add(category)
+
+    # 2) 先按 (pop_id, field_type) 建索引。
+    #
+    # 同一个 pop_id 通常有两类条目：`field_type = -1`（**基础/通用**掉落）
+    # 与 `field_type = 地图号`（**该地图专用**掉落）。专用条目是对基础的覆盖，
+    # 不能两者都展开——否则同一张图的掉落会被算两遍，卡片上出现
+    # 「40%→x2  40%→x2」这种重复。
+    by_pop: dict[int, dict[int, dict]] = {}
+    for entry in params:
+        if not isinstance(entry, dict):
+            continue
+        pop_id = entry.get("pop_id")
+        field_type = entry.get("field_type")
+        if not isinstance(pop_id, int) or not isinstance(field_type, int):
+            continue
+        by_pop.setdefault(pop_id, {})[field_type] = entry
+
+    # 3) 逐条采集掉落展开
+    result: dict[int, list[dict]] = {}
+    seen: set[tuple] = set()
+    for pop_id, entries in by_pop.items():
+        all_maps = sorted(pop_maps.get(pop_id, set()))
+        categories = pop_categories.get(pop_id) or set()
+        node = node_name(next(iter(sorted(categories)), None))
+
+        for map_number in all_maps:
+            # 有该地图的专用条目就用它，否则退回 -1 的通用条目
+            entry = entries.get(map_number) or entries.get(-1)
+            if entry is None:
+                continue
+            for rank, rank_label in (
+                ("lower", "下位"),
+                ("upper", "上位"),
+                ("master", "大师"),
+            ):
+                ids = entry.get(f"{rank}_id") or []
+                nums = entry.get(f"{rank}_num") or []
+                probs = entry.get(f"{rank}_probability") or []
+                for index, raw in enumerate(ids):
+                    if not isinstance(raw, dict):
+                        continue
+                    item_id = raw.get("Normal")
+                    if not isinstance(item_id, int):
+                        continue
+                    probability = probs[index] if index < len(probs) else 0
+                    if not isinstance(probability, (int, float)) or probability <= 0:
+                        continue
+                    quantity = nums[index] if index < len(nums) else 0
+                    # 同一采集点的多个槽位可能出现完全相同的产出，去重
+                    dedupe_key = (
+                        item_id,
+                        pop_id,
+                        map_number,
+                        rank_label,
+                        int(quantity or 0),
+                        float(probability),
+                    )
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    result.setdefault(item_id, []).append(
+                        {
+                            "map": map_names.get(map_number, f"地图{map_number}"),
+                            "map_no": map_number,
+                            # 同图同节点可能有多个采集点（矿脉①②），用 pop_id 区分
+                            "pop_id": pop_id,
+                            "node": node,
+                            "rank": rank_label,
+                            "quantity": int(quantity or 0),
+                            "chance": float(probability),
+                        }
+                    )
+
+    # 4) 排序：地图 -> 节点 -> 难度 -> 概率降序
+    rank_order = {"下位": 0, "上位": 1, "大师": 2}
+    for records in result.values():
+        records.sort(
+            key=lambda r: (
+                r["map_no"],
+                r["node"],
+                rank_order.get(r["rank"], 9),
+                -r["chance"],
+            )
+        )
+    return result
 
 
 def build_map_names(mhrice: dict) -> tuple[dict, dict]:
@@ -1137,7 +1448,33 @@ def _quest_level_num(level) -> int:
 # --------------------------------------------------------------------------
 
 
-def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
+def load_existing_map_names(out_path: Path) -> dict:
+    """读已存在快照里的 map_names，用于「新值为空时沿用旧值」。
+
+    栖息地图来自外部抓取（`fetch_habitats.py`），而 `extract.py` 会**重写整个
+    快照**。于是只要重建时没跑抓取那一步（例如用了 `--skip-fetch`），
+    地图就会**静默消失**——卡片上只是安静地少一行「出现地图」，没有任何报错。
+
+    这里把已有的地图名读进来，新算出来为空时沿用，
+    让重建顺序不再影响正确性。
+    """
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    tables = data.get("tables") or {}
+    carried: dict[str, list[str]] = {}
+    for table_name in ("monsters", "small_monsters"):
+        for key, entry in (tables.get(table_name) or {}).items():
+            names = entry.get("map_names")
+            if names:
+                carried[f"{table_name}:{key}"] = names
+    return carried
+
+
+def build_snapshot(
+    mhrice_path: Path, items_path: Path, previous_map_names: dict | None = None
+) -> dict:
     print(f"读取 {mhrice_path} ...")
     mhrice = load_json(mhrice_path)
     print(f"读取 {items_path} ...")
@@ -1200,6 +1537,14 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
         f"{sum(len(v) for v in anomaly_rewards.values())} 条怪物记录"
     )
 
+    # 野外采集点（含节点类型，例如「水没林 · 骨冢」）。来自游戏本体数据，
+    # 取代早期的 Kiranico 抓取：既有节点名，也是逐地图的。
+    gathering_nodes = build_gathering_nodes(mhrice, maps)
+    print(
+        f"  野外采集点: {len(gathering_nodes)} 个素材、"
+        f"{sum(len(v) for v in gathering_nodes.values())} 条记录"
+    )
+
     # 纳入**全部素材类物品**，而不是只保留「查得到来源」的那些。
     #
     # 踩过的坑：这里先后用「有怪物掉落」和「有怪物掉落或任务报酬」当过滤条件，
@@ -1224,10 +1569,12 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
         if item["type"] not in MATERIAL_TYPES and key not in referenced:
             continue
         entries = sources.get(key, [])
-        # 有傀异调查报酬但没进 sources 的，也不算「没有来源」
+        nodes = gathering_nodes.get(item_id, [])
+        # 有傀异调查报酬 / 野外采集点但没进 sources 的，也不算「没有来源」
         if (
             not entries
             and not anomaly_rewards.get(item_id)
+            and not nodes
             and item["type"] in MATERIAL_TYPES
         ):
             no_source += 1
@@ -1238,6 +1585,7 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
             "type": item["type"],
             "sources": entries,
             "anomaly_rewards": anomaly_rewards.get(item_id, []),
+            "gathering_nodes": nodes,
         }
     print(
         f"  快照内素材: {len(items_out)}"
@@ -1246,12 +1594,17 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
     )
 
     # 怪物只保留有掉落的，其余是环境生物
+    carried = previous_map_names or {}
     monsters_out = {}
     for em, info in monsters.items():
         drops = monster_drops.get(em)
         if not drops:
             continue
-        monsters_out[em] = {**info, "drops": drops}
+        entry = {**info, "drops": drops}
+        names = entry.get("map_names") or carried.get(f"monsters:{em}") or []
+        if names:
+            entry["map_names"] = names
+        monsters_out[em] = entry
     print(f"  快照内怪物: {len(monsters_out)} 只大型")
 
     # 小动物：只保留有掉落的，并补上栖息地图
@@ -1261,10 +1614,13 @@ def build_snapshot(mhrice_path: Path, items_path: Path) -> dict:
         if not drops:
             continue
         entry = {**info, "drops": drops}
-        # 地图名一并给出，卡片可直接显示「出现在哪些地图」
-        entry["map_names"] = [
-            maps.get(n, "") for n in (info.get("maps") or []) if maps.get(n)
-        ]
+        # 地图名一并给出，卡片可直接显示「出现在哪些地图」。
+        # 源数据里大多小动物没有栖息数据，需要外部抓取补；新值为空时沿用旧值，
+        # 避免漏跑抓取那一步就把地图静默抹掉。
+        names = [maps.get(n, "") for n in (info.get("maps") or []) if maps.get(n)]
+        if not names:
+            names = carried.get(f"small_monsters:{ems}") or []
+        entry["map_names"] = names
         small_out[ems] = entry
     print(f"  快照内小动物: {len(small_out)} 只（含掉落与栖息地图）")
 
@@ -1332,7 +1688,9 @@ def main(argv=None) -> int:
             print(f"错误：源文件不存在 {path}", file=sys.stderr)
             return 2
 
-    snapshot = build_snapshot(mhrice_path, items_path)
+    snapshot = build_snapshot(
+        mhrice_path, items_path, previous_map_names=load_existing_map_names(args.out)
+    )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", encoding="utf-8") as handle:

@@ -19,6 +19,14 @@ MAX_MONSTERS = 8
 MAX_QUESTS = 5
 MAX_GATHERING_MAPS = 6
 MAX_GATHERING_PER_MAP = 4
+# 怪物卡：一个素材一个方块
+MAX_MATERIALS_PER_MONSTER = 10
+MAX_ENTRIES_PER_MATERIAL = 5
+# 稀有素材阈值（稀有度 >= 该值的方块转金色高亮）
+RARE_RARITY = 7
+
+# 同地图同名节点的多个采集点编号（矿脉①②…）
+CIRCLED = {1: "①", 2: "②", 3: "③", 4: "④", 5: "⑤", 6: "⑥"}
 
 
 @dataclass
@@ -47,9 +55,8 @@ class Command:
 
 def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
     """素材卡：每只怪物一个分区 + 可刷任务。"""
-    subtitle_parts = [f"稀有度 {material.rarity}"]
-    if material.item_type:
-        subtitle_parts.append(_type_label(material.item_type))
+    # 稀有度改用卡片上的菱形刻度显示，副标题不再重复；类型名由右上角标签承载
+    subtitle_parts = []
     if material.monster_count:
         subtitle_parts.append(f"来源怪物 {material.monster_count} 只")
     else:
@@ -58,6 +65,7 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
     if material.is_rare:
         subtitle_parts.append("稀有素材")
     subtitle = " · ".join(subtitle_parts)
+    type_label = _type_label(material.item_type) if material.item_type else ""
 
     sections: list[Section] = []
     groups = material.grouped_by_monster(MAX_MONSTERS)
@@ -96,12 +104,9 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
         lines: list[Line] = []
         for entry in group["entries"][:MAX_ENTRIES_PER_MONSTER]:
             rank = entry.get("rank_label") or ""
-            part = entry.get("part_name")
-            if part:
-                # 部位破坏：写明是哪个部位，否则同一只怪的多行看起来一模一样
-                kind = f"{part}破坏"
-            else:
-                kind = entry.get("kind_label") or ""
+            # kind_label 已由提取层组合好具体部位/剥取来源
+            # （例如「头部破坏」「尾巴剥取」「本体剥取」）
+            kind = entry.get("kind_label") or ""
             quantity = entry.get("quantity") or 0
             chance = entry.get("chance") or 0
             segments = [
@@ -179,25 +184,33 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
             )
         )
 
-    # 采集点（来自 Kiranico，仅部分素材有）
-    map_groups = material.gathering_grouped(MAX_GATHERING_MAPS)
-    if map_groups:
+    # 采集点。
+    #
+    # 优先用「地图 · 节点」数据（来自游戏本体 item_pop_lot）：能明确写出
+    # 「水没林 · 骨冢」这种具体采集点，而不只是地图名。
+    # 旧快照没有这部分数据时，退回 Kiranico 的地图级采集点。
+    node_groups = material.gathering_node_groups(MAX_GATHERING_MAPS)
+    if node_groups:
         lines = []
-        for group in map_groups:
+        for group in node_groups:
+            site = group.get("site") or 1
+            label = group["node"] + (CIRCLED.get(site, str(site)) if site > 1 else "")
             for rank in group["ranks"]:
                 outcomes = rank["outcomes"]
                 shown = outcomes[:MAX_GATHERING_PER_MAP]
                 segments = [
                     (group["map"], "body"),
+                    (" · ", "muted"),
+                    (label, "accent"),
                     (f" {rank['rank']}", "rank"),
                     ("　", "muted"),
                 ]
                 for index, outcome in enumerate(shown):
                     if index:
                         segments.append(("  ", "muted"))
-                    segments.append((f"{outcome.get('chance') or ''}", "chance"))
-                    segments.append(("→", "muted"))
-                    segments.append((f"{outcome.get('quantity') or ''}", "body"))
+                    segments.append((f"{_fmt_chance(outcome.get('chance'))}", "chance"))
+                    segments.append(("→x", "muted"))
+                    segments.append((f"{outcome.get('quantity') or 0}", "body"))
                 if len(outcomes) > len(shown):
                     segments.append((f" 等{len(outcomes)}条", "muted"))
                 lines.append(Line.of(*segments))
@@ -205,9 +218,38 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
             Section(
                 title="采集点",
                 lines=lines,
-                footer="采集点分下位/上位/大师等级，来源数据未标注星级",
+                footer="难度分下位/上位/大师；同地图同名节点的多个采集点用①②区分",
             )
         )
+    else:
+        map_groups = material.gathering_grouped(MAX_GATHERING_MAPS)
+        if map_groups:
+            lines = []
+            for group in map_groups:
+                for rank in group["ranks"]:
+                    outcomes = rank["outcomes"]
+                    shown = outcomes[:MAX_GATHERING_PER_MAP]
+                    segments = [
+                        (group["map"], "body"),
+                        (f" {rank['rank']}", "rank"),
+                        ("　", "muted"),
+                    ]
+                    for index, outcome in enumerate(shown):
+                        if index:
+                            segments.append(("  ", "muted"))
+                        segments.append((f"{outcome.get('chance') or ''}", "chance"))
+                        segments.append(("→", "muted"))
+                        segments.append((f"{outcome.get('quantity') or ''}", "body"))
+                    if len(outcomes) > len(shown):
+                        segments.append((f" 等{len(outcomes)}条", "muted"))
+                    lines.append(Line.of(*segments))
+            sections.append(
+                Section(
+                    title="采集点",
+                    lines=lines,
+                    footer="采集点分下位/上位/大师等级",
+                )
+            )
 
     has_monster_source = bool(groups) or material.has_anomaly
     if not has_monster_source and not sections:
@@ -224,8 +266,10 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
         # 没有怪物掉落，但还有别的途径：按实际存在的途径写说明，
         # 不要写死成「见任务信息」——采集类素材可能只有采集点。
         ways = []
-        if material.gathering:
+        if material.gathering_nodes or material.gathering:
             ways.append("采集点")
+        if material.has_anomaly:
+            ways.append("傀异调查")
         if any(section.title == "任务报酬" for section in sections):
             ways.append("任务报酬")
         if any(section.title == "可刷任务" for section in sections):
@@ -247,6 +291,8 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
         subtitle=subtitle,
         sections=sections,
         footnote=_footnote(snapshot),
+        rarity=material.rarity or None,
+        badge=type_label,
     )
 
 
@@ -278,25 +324,50 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
                 )
             )
 
-    for rank, entries in monster.grouped_by_rank_then_kind():
-        rank_label = {"Low": "下位", "High": "上位", "Master": "大师"}.get(
-            rank, rank or "未知"
-        )
+    # 一个素材一个方块，方块内是该素材的各种获取方式与概率。
+    # 这样读起来是「这份素材怎么拿」，而不是在按难度铺开的长表里来回找同名素材。
+    material_groups = monster.grouped_by_material(MAX_MATERIALS_PER_MONSTER)
+    for group in material_groups:
+        entries = group["entries"]
+        name = _item_name(snapshot, entries[0]) or "未知素材"
+        rarity = _item_rarity(snapshot, group["item_id"])
+
         lines = []
-        for entry in entries[:14]:
-            segments = [
-                (f"{entry.get('kind_label') or ''} ", "body"),
-                (f"{entry.get('quantity') or 0}个 ", "body"),
-                (f"{_fmt_chance(entry.get('chance'))}", "chance"),
-                (f"  {_item_name(snapshot, entry)}", "muted"),
-            ]
-            lines.append(Line.of(*segments))
-        hidden = len(entries) - 14
+        for entry in entries[:MAX_ENTRIES_PER_MATERIAL]:
+            # 概率必须留在**段末**：渲染器会把末尾的 chance 段右对齐成列并配量条
+            lines.append(
+                Line.of(
+                    (f"{entry.get('rank_label') or ''} · ", "rank"),
+                    (f"{entry.get('kind_label') or ''} ", "body"),
+                    (f"{entry.get('quantity') or 0}个  ", "body"),
+                    (f"{_fmt_chance(entry.get('chance'))}", "chance"),
+                )
+            )
+        hidden = len(entries) - MAX_ENTRIES_PER_MATERIAL
+        footer = f"另有 {hidden} 条获取方式" if hidden > 0 else ""
         sections.append(
             Section(
-                title=rank_label,
+                title=name,
                 lines=lines,
-                footer=f"另有 {hidden} 条" if hidden > 0 else "",
+                footer=footer,
+                # 稀有素材（稀有度 >= 7）的方块转金色，一眼看出值得刷的
+                highlight=rarity >= RARE_RARITY,
+            )
+        )
+
+    # 超出上限的素材不能静默丢掉，用一个小方块把名字列出来
+    shown = len(material_groups)
+    total_materials = monster.material_count()
+    if total_materials > shown:
+        rest = monster.grouped_by_material(total_materials)[shown:]
+        names = "、".join(
+            _item_name(snapshot, group["entries"][0]) or "未知素材" for group in rest
+        )
+        sections.append(
+            Section(
+                title="其它素材",
+                lines=[Line.of((names, "muted"))],
+                footer=f"另有 {len(rest)} 种素材，可用 /mh 素材 <名> 查详情",
             )
         )
 
@@ -312,6 +383,7 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
         subtitle=subtitle,
         sections=sections,
         footnote=_footnote(snapshot),
+        badge="小动物" if monster.is_small else "怪物",
     )
 
 
@@ -373,6 +445,7 @@ def build_quest_card(snapshot: Snapshot, quest: QuestInfo) -> Card:
         subtitle=subtitle,
         sections=sections,
         footnote=_footnote(snapshot),
+        badge="任务",
     )
 
 
@@ -560,6 +633,17 @@ def _item_name(snapshot: Snapshot, entry: dict) -> str:
         if item and item.get("name"):
             return item["name"]
     return entry.get("name") or ""
+
+
+def _item_rarity(snapshot: Snapshot, item_id) -> int:
+    """按物品 id 取稀有度；查不到返回 0。"""
+    item = snapshot.items.get(str(item_id))
+    if item:
+        try:
+            return int(item.get("rarity") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 # 素材类型的中文标签（覆盖 items.json 里实际出现的类型）

@@ -89,6 +89,9 @@ class MaterialInfo:
     # 傀异调查（怪异调查）里怪异化怪物的掉落。结构与 sources 不同：
     # 它是「怪物 + 傀异等级区间 + 概率」，来自 mystery_reward_item 表。
     anomaly_rewards: list[dict] = field(default_factory=list)
+    # 野外采集点（含节点类型）：来自 item_pop_lot + maps，
+    # 形如「水没林 · 骨冢 · 大师 20%→x1」。
+    gathering_nodes: list[dict] = field(default_factory=list)
 
     @property
     def is_rare(self) -> bool:
@@ -98,6 +101,83 @@ class MaterialInfo:
     @property
     def has_anomaly(self) -> bool:
         return bool(self.anomaly_rewards)
+
+    def gathering_node_groups(
+        self, max_maps: int = 6, max_sites: int = 4
+    ) -> list[dict]:
+        """采集点按「地图 · 节点 · 采集点」聚合。
+
+        同一张图上同一种节点常有**多个采集点**（矿脉①②…），掉落率不同，
+        所以按 `pop_id` 分开并附序号——这正是早先 Kiranico 表里
+        「同一地图同一难度出现两块不同概率」的真实原因。
+
+        返回 [{'map', 'node', 'site', 'ranks': [{'rank', 'outcomes': [...]}], 'best'}, ...]
+        """
+        rank_order = {"下位": 0, "上位": 1, "大师": 2}
+        buckets: dict[tuple, dict] = {}
+        for point in self.gathering_nodes:
+            key = (
+                point.get("map_no"),
+                point.get("map"),
+                point.get("node"),
+                point.get("pop_id"),
+            )
+            bucket = buckets.setdefault(
+                key,
+                {
+                    "map_no": point.get("map_no") or 0,
+                    "map": point.get("map") or "未知地图",
+                    "node": point.get("node") or "采集点",
+                    "pop_id": point.get("pop_id"),
+                    "ranks": {},
+                    "best": 0.0,
+                },
+            )
+            rank = point.get("rank") or ""
+            entry = bucket["ranks"].setdefault(rank, {"rank": rank, "outcomes": []})
+            chance = _chance_value(point.get("chance"))
+            entry["outcomes"].append(
+                {
+                    "quantity": point.get("quantity") or 0,
+                    "chance": point.get("chance") or 0,
+                    "value": chance,
+                }
+            )
+            bucket["best"] = max(bucket["best"], chance)
+
+        ordered = sorted(
+            buckets.values(),
+            key=lambda b: (
+                b["map_no"],
+                b["node"],
+                b["pop_id"] if b["pop_id"] is not None else 0,
+            ),
+        )
+        for bucket in ordered:
+            ranks = sorted(
+                bucket["ranks"].values(), key=lambda r: rank_order.get(r["rank"], 9)
+            )
+            for rank in ranks:
+                rank["outcomes"].sort(key=lambda o: -o["value"])
+            bucket["ranks"] = ranks
+
+        # 同「地图 · 节点」有多个采集点时编号（①②③）
+        site_counter: dict[tuple, int] = {}
+        for bucket in ordered:
+            group_key = (bucket["map_no"], bucket["node"])
+            site_counter[group_key] = site_counter.get(group_key, 0) + 1
+            bucket["site"] = site_counter[group_key]
+
+        # 地图数量上限按「地图」算
+        seen_maps: list[int] = []
+        trimmed: list[dict] = []
+        for bucket in ordered:
+            if bucket["map_no"] not in seen_maps:
+                if len(seen_maps) >= max_maps:
+                    continue
+                seen_maps.append(bucket["map_no"])
+            trimmed.append(bucket)
+        return trimmed[: max_sites * max_maps]
 
     def source_monster_names(self) -> list[str]:
         """所有能给出该素材的怪物名（含傀异调查里的怪异化怪物）。
@@ -198,33 +278,39 @@ class MonsterInfo:
     def is_small(self) -> bool:
         return self.kind == "small"
 
-    def grouped_by_rank_then_kind(self) -> list[tuple[str, list[dict]]]:
-        """按难度分组，组内按概率降序。
+    def grouped_by_material(self, max_materials: int = 10) -> list[dict]:
+        """按**素材**聚合：一个素材一个方块，方块内是它的各种获取方式。
 
-        部位破坏的条目会把部位名合并到 label 里（例如「部位破坏报酬·头部」），
-        否则同一只怪会出现十几行「部位破坏报酬」却看不出差在哪。
+        返回 [{'item_id', 'entries', 'best', 'method_count'}, ...]，
+        按该素材的最高获取概率降序（最容易入手的排在前面）。
+
+        每个素材内部按概率降序，并保留难度与方式标签，
+        所以方块里读起来就是「这只怪的这份素材怎么拿、各多少概率」。
         """
-        order = {"Master": 0, "High": 1, "Low": 2, "": 3}
-        buckets: dict[str, list[dict]] = {}
+        buckets: dict[str, dict] = {}
         for drop in self.drops:
-            buckets.setdefault(drop.get("rank") or "", []).append(drop)
-        result = []
-        for rank in sorted(buckets, key=lambda r: order.get(r, 9)):
-            entries = sorted(buckets[rank], key=lambda d: -float(d.get("chance") or 0))
-            prepared = [self._with_part_label(entry) for entry in entries]
-            result.append((rank, prepared))
-        return result
+            key = str(drop.get("item_id"))
+            bucket = buckets.setdefault(
+                key, {"item_id": key, "entries": [], "best": 0.0}
+            )
+            bucket["entries"].append(drop)
+            bucket["best"] = max(bucket["best"], float(drop.get("chance") or 0))
 
-    @staticmethod
-    def _with_part_label(entry: dict) -> dict:
-        """给部位破坏的记录补一个带部位名的 label。"""
-        if entry.get("kind") != "parts_break_reward" or not entry.get("part_name"):
-            return entry
-        labelled = dict(entry)
-        labelled["kind_label"] = (
-            f"{entry.get('kind_label') or '部位破坏报酬'}·{entry['part_name']}"
-        )
-        return labelled
+        ordered = sorted(buckets.values(), key=lambda b: (-b["best"], b["item_id"]))
+        for bucket in ordered:
+            bucket["entries"].sort(
+                key=lambda d: (
+                    -float(d.get("chance") or 0),
+                    d.get("rank_label") or "",
+                    d.get("kind_label") or "",
+                )
+            )
+            bucket["method_count"] = len(bucket["entries"])
+        return ordered[:max_materials]
+
+    def material_count(self) -> int:
+        """掉落的素材种数（去重）。"""
+        return len({str(drop.get("item_id")) for drop in self.drops})
 
 
 @dataclass
@@ -326,6 +412,7 @@ class Snapshot:
             gathering=item.get("gathering") or [],
             monster_maps=self._maps_by_monster_name(),
             anomaly_rewards=anomaly,
+            gathering_nodes=item.get("gathering_nodes") or [],
         )
 
     def _maps_by_monster_name(self) -> dict[str, list[str]]:
