@@ -277,6 +277,28 @@ class CategoryNames:
 # --------------------------------------------------------------------------
 
 
+def _series_name_tables(mhrice: dict) -> dict:
+    """读系列名表，返回 ``{"base": {编号: 名}, "mr": {编号: 名}}``。
+
+    条目名形如 ``WeaponSeries_Hunter_000``——**没有** ``_Name`` 后缀，
+    所以不能复用武器名表那套正则（实测直接用 `_NAME_NUM_RE` 会一条都取不到）。
+    """
+    out: dict[str, dict[int, str]] = {}
+    for key, table_name in (("base", "weapon_series"), ("mr", "weapon_series_mr")):
+        table: dict[int, str] = {}
+        for entry in (mhrice.get(table_name) or {}).get("entries") or []:
+            match = re.search(r"_(\d+)$", entry.get("name") or "")
+            if not match:
+                continue
+            content = entry.get("content") or []
+            name = content[COL_SIMPLIFIED] if len(content) > COL_SIMPLIFIED else ""
+            name = (name or "").strip()
+            if name and REJECTED not in name:
+                table[int(match.group(1))] = name
+        out[key] = table
+    return out
+
+
 def _weapon_name_index(type_table) -> dict[int, dict]:
     """``{武器 id: 名称条目}``。
 
@@ -382,6 +404,47 @@ def _weapon_parents(type_table, tag) -> dict[int, str | None]:
             (_tree_key(row.get("prev_weapon_type")), prev_index)
         )
         out[weapon_id] = parent_id
+    return out
+
+
+def _weapon_series(type_table, tag, series_names: dict) -> dict[int, str]:
+    """武器 id -> 系列名（如「伞鸟衍生」）。
+
+    ## 系列是什么
+
+    游戏把「同一只怪衍生出来的整条武器树」编成一个 `tree_type`，名字在
+    `weapon_series` / `weapon_series_mr` 表里（条目名 `WeaponSeries_Hunter_NNN`）。
+    用户会直接按系列找武器（「伞鸟枪」「雷神龙盾斧」），所以必须拿到它。
+
+    ## tree_type 有两种形态，编号也是两套
+
+    * `"Ore"`（字符串）→ 系列 000「矿石素材衍生」
+    * `{"TreeType": n}`：
+      - `n ∈ [1, 97]` → `weapon_series` 的 **n+1**
+      - `n ≥ 98`    → `weapon_series_mr` 的 **n+102**
+
+    两个公式都用实例核对过：大剑 id=2（`"Ore"`）落在「矿石素材衍生」，
+    大剑 id=302（`TreeType 1`）落在「炎火衍生」——两把武器的实际系列都对。
+    实测 128 个 tree_type **全部解析成功**，没有解析不到的。
+    """
+    base = series_names.get("base") or {}
+    master = series_names.get("mr") or {}
+    out: dict[int, str] = {}
+    for row in (type_table.get("tree") or {}).get("param") or []:
+        weapon_id = _id_of(row, tag)
+        if weapon_id is None:
+            continue
+        tree_type = row.get("tree_type")
+        name = ""
+        if isinstance(tree_type, str):
+            if tree_type == "Ore":
+                name = base.get(0, "")
+        elif isinstance(tree_type, dict):
+            number = tree_type.get("TreeType")
+            if isinstance(number, int):
+                name = base.get(number + 1) or master.get(number + 102) or ""
+        if name:
+            out[weapon_id] = name
     return out
 
 
@@ -589,6 +652,7 @@ def build_equipment(mhrice: dict, items: dict) -> dict:
     :data:`LAST_STATS`，返回值里只有契约规定的四个键。
     """
     cat_names = CategoryNames(mhrice)
+    series_names = _series_name_tables(mhrice)
 
     weapons: dict[str, dict] = {}
     skipped = collections.Counter()
@@ -608,6 +672,7 @@ def build_equipment(mhrice: dict, items: dict) -> dict:
         name_index = _weapon_name_index(type_table)
         recipes_of = _weapon_recipes(type_table, tag, cat_names)
         parents = _weapon_parents(type_table, tag)
+        series_of = _weapon_series(type_table, tag, series_names)
 
         for base_row in base_rows:
             weapon_id = _id_of(base_row, tag)
@@ -674,6 +739,8 @@ def build_equipment(mhrice: dict, items: dict) -> dict:
                 "hyakuryu_skills": _hyakuryu_skills(base_row),
                 "special": _weapon_special(type_name, base_row),
                 "parent": f"{type_name}:{parent_id}" if parent_id is not None else None,
+                # 系列名（如「伞鸟衍生」）——用户会直接按系列找武器
+                "series": series_of.get(weapon_id) or "",
                 "recipes": recipes,
             }
 

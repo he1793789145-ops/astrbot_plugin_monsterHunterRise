@@ -1238,6 +1238,13 @@ class LedgerRenderer:
                             )
                             + 7
                         )
+                    elif segment_style == "rank":
+                        # 与 _block 保持一致：难度/稀有度前缀后面要有分隔符，
+                        # 否则会连成「R10晓光刺枪荣光」这种读不断的长串
+                        canvas.text(
+                            (x, y), segment_text + " · ", self.f_body, COLORS["rank"]
+                        )
+                        x += canvas.textlength(segment_text + " · ", self.f_body)
                     else:
                         color = (
                             COLORS["muted"]

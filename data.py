@@ -376,6 +376,10 @@ class Snapshot:
         self._quest_by_name: dict[str, list[int]] = {}
         self._weapon_by_name: dict[str, list[str]] = {}
         self._skill_to_decos: dict[str, list[str]] = {}
+        # 派生树的两个方向：父 -> 子（快照只存了 parent，子在这里反推），
+        # 以及 系列名 -> 该系列的武器（用户会按「伞鸟枪」这样按系列找）
+        self._children: dict[str, list[str]] = {}
+        self._by_series: dict[str, list[str]] = {}
 
         self._build_indices()
         self._build_recipe_index()
@@ -449,6 +453,13 @@ class Snapshot:
             name = (weapon.get("name") or "").strip()
             if name:
                 self._weapon_by_name.setdefault(name, []).append(weapon_key)
+            # 子武器：快照里只存了 parent，反向建一次即可（3866 条边，毫秒级）
+            parent = weapon.get("parent")
+            if parent:
+                self._children.setdefault(parent, []).append(weapon_key)
+            series = (weapon.get("series") or "").strip()
+            if series:
+                self._by_series.setdefault(series, []).append(weapon_key)
             for system, recipe in (weapon.get("recipes") or {}).items():
                 if isinstance(recipe, dict):
                     add(
@@ -537,6 +548,65 @@ class Snapshot:
 
     def search_weapons(self, query: str, limit: int = 12) -> list[Match]:
         return self._search(query, self._weapon_by_name, self.weapons, limit)
+
+    def children_of(self, weapon_key: str) -> list[dict]:
+        """能由这把武器强化成的下一级武器（派生树的子节点）。"""
+        keys = self._children.get(weapon_key) or []
+        result = [
+            {**self.weapons[key], "key": key} for key in keys if key in self.weapons
+        ]
+        return sorted(
+            result, key=lambda w: (int(w.get("rarity") or 0), w.get("name") or "")
+        )
+
+    def series_matching(self, text: str) -> list[str]:
+        """把「伞鸟」这类说法匹配到系列名（系列名形如「伞鸟衍生」）。
+
+        三档优先级，取命中的最高一档（同一档内全部返回，让调用方合并——
+        例如「爵银龙」同时命中「爵银龙衍生」与「爵银龙衍生改」，
+        两套都是这只怪的衍生武器，合起来才是用户想看的全集）。
+        """
+        target = _normalize(text)
+        if not target:
+            return []
+        tiers: dict[int, list[str]] = {}
+        for name in self._by_series:
+            normalized = _normalize(name)
+            base = normalized
+            for suffix in ("衍生改", "衍生"):
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)]
+                    break
+            if base == target:
+                tier = 0
+            elif base.startswith(target) or normalized.startswith(target):
+                tier = 1
+            elif target in normalized:
+                tier = 2
+            else:
+                continue
+            tiers.setdefault(tier, []).append(name)
+        if not tiers:
+            return []
+        return sorted(tiers[min(tiers)], key=len)
+
+    def weapons_in_series(
+        self, series_names: list[str], weapon_type: str | None = None
+    ) -> list[dict]:
+        """某个（或几个）系列里的武器；可再按武器类型收窄。"""
+        seen: dict[str, dict] = {}
+        for series in series_names:
+            for key in self._by_series.get(series) or []:
+                weapon = self.weapons.get(key)
+                if not weapon:
+                    continue
+                if weapon_type and weapon.get("type") != weapon_type:
+                    continue
+                seen.setdefault(key, {**weapon, "key": key})
+        return sorted(
+            seen.values(),
+            key=lambda w: (-int(w.get("rarity") or 0), w.get("name") or ""),
+        )
 
     # ---- 装饰品 ---------------------------------------------------------
 

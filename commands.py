@@ -644,6 +644,61 @@ SYSTEM_LABELS = {
     "qurious": "怪异炼化",
 }
 
+# 「怪物系列 + 武器类型」的复合查询（例：伞鸟枪 / 雷神龙盾斧）。
+# 按后缀长度降序匹配，保证「铳枪」不会被「枪」抢先命中。
+COMPOUND_SUFFIXES = sorted(
+    (
+        ("大剑", "great_sword"),
+        ("太刀", "long_sword"),
+        ("片手剑", "short_sword"),
+        ("片手", "short_sword"),
+        ("双剑", "dual_blades"),
+        ("双刀", "dual_blades"),
+        ("大锤", "hammer"),
+        ("锤", "hammer"),
+        ("狩猎笛", "horn"),
+        ("笛", "horn"),
+        ("长枪", "lance"),
+        ("铳枪", "gun_lance"),
+        ("枪", "lance"),
+        ("铳", "gun_lance"),
+        ("斩击斧", "slash_axe"),
+        ("斩斧", "slash_axe"),
+        ("充能斧", "charge_axe"),
+        ("盾斧", "charge_axe"),
+        ("操虫棍", "insect_glaive"),
+        ("虫棍", "insect_glaive"),
+        ("棍", "insect_glaive"),
+        ("弓", "bow"),
+        ("轻弩", "light_bowgun"),
+        ("重弩", "heavy_bowgun"),
+        ("弩", "light_bowgun"),
+    ),
+    key=lambda pair: -len(pair[0]),
+)
+
+
+def _type_zh_of(weapon_type: str | None) -> str:
+    """武器表键 -> 中文名（取最短别名，如 lance -> 长枪）。"""
+    if not weapon_type:
+        return ""
+    candidates = [
+        label for label, key in WEAPON_TYPE_LABELS.items() if key == weapon_type
+    ]
+    return min(candidates, key=len) if candidates else ""
+
+
+def _split_series_query(query: str) -> tuple[str, str | None]:
+    """把「伞鸟枪」拆成 (`伞鸟`, 长枪)；拆不出类型时返回 (`伞鸟枪`, None)。
+
+    只有在**去掉后缀后还剩内容**时才认（否则「弓」这类单字类型会被整段吃掉）。
+    """
+    for suffix, weapon_type in COMPOUND_SUFFIXES:
+        if query.endswith(suffix) and len(query) > len(suffix):
+            return query[: -len(suffix)], weapon_type
+    return query, None
+
+
 # 武器类型专属信息（A22 追加：盾斧的瓶、斩斧的瓶、铳枪的炮击都要显示）
 SPECIAL_LABELS = {
     "bottle": "瓶",
@@ -737,6 +792,53 @@ def build_weakness_section(snapshot: Snapshot, monster: MonsterInfo) -> Section 
         glyph="note",
         count="通常状态",
         footer="各项取全部位最高肉质；源数据的部位状态无对应字段，故只取通常状态",
+    )
+
+
+def build_series_card(
+    snapshot: Snapshot,
+    label: str,
+    series_names: list[str],
+    weapons: list[dict],
+    weapon_type: str | None = None,
+) -> Card:
+    """武器系列卡：某只怪衍生系列里的武器（例：伞鸟枪 → 伞鸟衍生的长枪）。"""
+    type_zh = _type_zh_of(weapon_type)
+    metrics = [
+        ("系列", " / ".join(series_names)),
+        ("武器", f"{len(weapons)} 把"),
+    ]
+    if type_zh:
+        metrics.append(("类型", type_zh))
+
+    rows = [
+        Line.of(
+            (f"R{weapon.get('rarity') or '?'}", "rank"),
+            (weapon.get("name") or "", "body"),
+            (_systems_text(weapon), "tag"),
+        )
+        for weapon in weapons
+    ]
+    # 标题用系列名而不是用户的原文——「伞鸟枪 的长枪」会重复，
+    # 「伞鸟衍生的长枪」才读得通。
+    base = series_names[0] if series_names else label
+    title = f"{base}的{type_zh}" if type_zh else f"{base}的武器"
+    return Card(
+        title=label,
+        sections=[
+            Section(
+                title=title,
+                lines=rows,
+                glyph="weapon",
+                count=f"共 {len(weapons)} 把",
+                # 系列里的武器往往十几到几十把，两列排版控高度
+                kind="grid",
+                footer="同一系列即同一只怪衍生的整条武器树",
+            )
+        ],
+        badge="武器系列",
+        metrics=metrics,
+        footnote=_footnote(snapshot),
     )
 
 
@@ -892,15 +994,31 @@ def build_weapon_detail_card(snapshot: Snapshot, weapon_key: str) -> Card | None
             )
         )
 
+    # 派生：父（由什么强化而来）与子（能强化成什么）都要显示。
+    # V1.3.1 之前只有父，用户看不到这把武器还能往哪升。
+    derive_rows: list[Line] = []
     parent_key = weapon.get("parent")
     if parent_key:
         parent = snapshot.weapon(parent_key)
         parent_name = (parent or {}).get("name") or parent_key
+        derive_rows.append(
+            Line.of(("来源", "tag"), (parent_name, "body"), ("强化而来", "muted"))
+        )
+    for child in snapshot.children_of(weapon_key):
+        derive_rows.append(
+            Line.of(
+                ("可强化为", "tag"),
+                (child.get("name") or "", "body"),
+                (f"R{child.get('rarity') or '?'}", "value"),
+            )
+        )
+    if derive_rows:
         sections.append(
             Section(
                 title="派生",
-                lines=[Line.of((f"由 {parent_name} 强化而来", "muted"))],
+                lines=derive_rows,
                 glyph="weapon",
+                footer="" if parent_key else "这是这条派生树的起点",
             )
         )
 
@@ -1035,40 +1153,64 @@ def handle_weapon(snapshot: Snapshot, argument: str) -> CommandResult:
         tokens = tokens[:-1]
     query = " ".join(tokens).strip()
 
-    # 先按素材（A12：素材优先，两者重名极少）
+    # 先试「怪物系列 + 武器类型」（V1.3.1）：例「伞鸟枪」「雷神龙盾斧」。
+    # 这类说法指的是「这只怪衍生出来的那条武器树里的某类武器」。
     if query:
-        material_matches = snapshot.search_materials(query, limit=6)
-        usable = [m for m in material_matches if not m.ambiguous]
-        if usable:
-            target = usable[0]
-            material = snapshot.material(target.key)
-            specific, category = snapshot.weapons_for_material(target.key, weapon_type)
-            note = f"（{target.note}）" if target.note else ""
-            card = build_weapon_list_card(
-                snapshot, target.name, material, specific, category, weapon_type
-            )
-            if note:
-                card.subtitle = note
-            return CommandResult(card=card)
-        if material_matches:
-            lines = [f"「{query}」同时接近几个素材，请回复更具体的名字："]
-            lines.extend(f"· {m.name}" for m in material_matches)
-            return CommandResult(text="\n".join(lines))
+        prefix, compound_type = _split_series_query(query)
+        effective_type = weapon_type or compound_type
+        series_names = snapshot.series_matching(prefix)
+        if series_names:
+            weapons = snapshot.weapons_in_series(series_names, effective_type)
+            if weapons:
+                return CommandResult(
+                    card=build_series_card(
+                        snapshot, query, series_names, weapons, effective_type
+                    )
+                )
 
-    # 再按武器名 -> 武器详情
+    # 素材与武器都查一遍，再按**匹配质量**决定走哪条分支。
+    #
+    # 不能简单地「素材优先」：实测查「钢剑」（武器精确名）会被素材侧的
+    # 模糊匹配抢走——「钢剑」与素材「钢蛋」编辑距离为 1，于是返回了「钢蛋」的
+    # 武器列表。规则改成：**精确的武器名胜过模糊的素材名**，
+    # 只有素材也精确命中（或两边命中质量相同）时才让素材优先（A12）。
+    material_matches = snapshot.search_materials(query, limit=6)
     weapon_matches = snapshot.search_weapons(query, limit=12)
+    best_material = next((m for m in material_matches if not m.ambiguous), None)
+    best_weapon = next((m for m in weapon_matches if not m.ambiguous), None)
+
+    use_weapon = best_weapon is not None and (
+        best_material is None or best_weapon.score < best_material.score
+    )
+
+    if not use_weapon and best_material is not None:
+        material = snapshot.material(best_material.key)
+        specific, category = snapshot.weapons_for_material(
+            best_material.key, weapon_type
+        )
+        card = build_weapon_list_card(
+            snapshot, best_material.name, material, specific, category, weapon_type
+        )
+        if best_material.note:
+            card.subtitle = best_material.note
+        return CommandResult(card=card)
+
+    if best_weapon is not None:
+        card = build_weapon_detail_card(snapshot, best_weapon.key)
+        if card:
+            if best_weapon.note:
+                card.subtitle = best_weapon.note
+            return CommandResult(card=card)
+
+    # 没命中：如果两边都有模糊候选，把候选列出来让用户挑
+    if material_matches:
+        lines = [f"「{query}」同时接近几个素材，请回复更具体的名字："]
+        lines.extend(f"· {m.name}" for m in material_matches)
+        return CommandResult(text="\n".join(lines))
     if not weapon_matches:
         return CommandResult(
             text=f"没有找到名为「{query}」的素材或武器。可以只输入名字的一部分再试试。"
         )
-    exact = [m for m in weapon_matches if m.score == 0]
-    if len(exact) == 1 or len(weapon_matches) == 1:
-        target = exact[0] if exact else weapon_matches[0]
-        card = build_weapon_detail_card(snapshot, target.key)
-        if card:
-            if target.note:
-                card.subtitle = target.note
-            return CommandResult(card=card)
 
     lines = [f"「{query}」匹配到 {len(weapon_matches)} 把武器，请回复更具体的名字："]
     for match in weapon_matches:
