@@ -40,7 +40,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 API = "https://gamecat.fun/rise/zh/api.php"
@@ -251,9 +251,7 @@ def main(argv=None) -> int:
             json.dumps(
                 {
                     "source": f"{API} (gamecat.fun 游猫网)",
-                    "fetched_at": datetime.now(timezone.utc).isoformat(
-                        timespec="seconds"
-                    ),
+                    "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
                     "habitats": habitats,
                 },
                 ensure_ascii=False,
@@ -275,7 +273,7 @@ def main(argv=None) -> int:
                 matched += 1
 
     snapshot["meta"].setdefault("notes", []).append(
-        f"栖息地图来自 {API}（gamecat.fun，抓取于 {datetime.now(timezone.utc).date()}）；"
+        f"栖息地图来自 {API}（gamecat.fun，抓取于 {datetime.now(UTC).date()}）；"
         "该站未声明许可证，仅提取「怪物→地图」事实映射"
     )
     args.out.write_text(

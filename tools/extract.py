@@ -28,7 +28,7 @@ import hashlib
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -140,6 +140,34 @@ PART_NAME_ZH = {
     "翼脚_右": "右翼脚",
     "角": "角",
     "牙": "牙",
+    # ---- 肉质表（meat_map）额外出现的词 ----
+    # 实测 meat_map 共 121 个词，上面已覆盖大半，这里是差额部分。
+    # 值为空字符串 = 内部标记，调用方应省略该部位名而不是显示日文。
+    "ヤド": "背壳",
+    "背びれ": "背鳍",
+    "背ビレ": "背鳍",
+    "翼腕": "翼腕",
+    "翼膜と端": "翼膜",
+    "後脚ヒレ": "后脚鳍",
+    "尻尾先端": "尾尖",
+    "尻尾先": "尾尖",
+    "尻尾根元": "尾根",
+    "尻尾切断部分": "尾巴（切断处）",
+    "上半身": "上半身",
+    "腹体": "腹部",
+    "背体": "背部",
+    "脚根本": "脚根",
+    "胴部": "躯干",
+    "触覚": "触角",
+    "左爪": "左爪",
+    "右爪": "右爪",
+    "手": "手",
+    "髪": "鬃毛",
+    "胸": "胸部",
+    "泥団子": "泥团",
+    "矢弾き用": "",
+    "肉質": "",
+    "RabbitConverted": "",
 }
 
 # map_no -> 地图名。Stage_Name_01.._11 实测取自 map_name 表；
@@ -342,6 +370,51 @@ SMALL_NAME_OVERRIDES = {
 }
 
 
+def build_official_names(mhrice: dict) -> tuple[dict, dict]:
+    """返回 (exact, base_only)：enemy_type -> 官方中文名。
+
+    ## 官方连接键是 `enemy_type`
+
+    条目名为 `EnemyIndex{et:03d}`（大师位在 `monster_names_mr` 里加 `_MR` 后缀）。
+    实测：大型怪 **78/79** 命中（唯一失败 em=131 在名称表里也没有条目），
+    小动物 **37/37** 有名字（34 只直接命中；3 只大师位变体 et=48/71/74 正好落在
+    名称表的缺号上，用 `et-1` 取到其基础形态名）。
+
+    大型怪与小动物的 `enemy_type` 值域**完全不重叠**
+    （大怪 0..46 / 76..98 / 107..115，小怪 47..75 / 99..106），
+    所以一张 {enemy_type: name} 表可以共用，不存在歧义。
+
+    `base_only` 只含基础表，供「大师位变体退回基础形态」时使用——
+    `et-1` 这个回退**不能全局乱用**（et=46 落在大型怪区间，`et-1=45` 会是另一只怪），
+    只应由调用方在小动物分支里显式使用。
+
+    ## 它取代了什么
+
+    此前是「掉落物名前缀签名 + 各种经验偏移」（`et-2`、`MR_INDEX_BY_ENEMY_TYPE`…），
+    那是早期试错的产物：实测小动物只有 23/37 命中，还有真错名
+    （et=47 显示成「爆鳞龙」、et≥99 的 8 只大师位小怪直接返回 None）。
+    官方键既准确又覆盖没有掉落记录的怪。
+    """
+    base_only: dict[int, str] = {}
+    for entry in unwrap_entries(mhrice.get("monster_names")):
+        match = re.match(r"EnemyIndex(\d{3})$", entry.get("name") or "")
+        if match:
+            base_only[int(match.group(1))] = strip_tags(localize(entry))
+
+    mr_only: dict[int, str] = {}
+    for entry in unwrap_entries(mhrice.get("monster_names_mr")):
+        match = re.match(r"EnemyIndex(\d{3})_MR$", entry.get("name") or "")
+        if match:
+            mr_only[int(match.group(1))] = strip_tags(localize(entry))
+
+    exact: dict[int, str] = {}
+    for enemy_type in set(base_only) | set(mr_only):
+        name = base_only.get(enemy_type) or mr_only.get(enemy_type) or ""
+        if name:
+            exact[enemy_type] = name
+    return exact, base_only
+
+
 def build_monsters(mhrice: dict, items: dict) -> dict:
     """返回 em -> 怪物信息。
 
@@ -368,6 +441,8 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
     base_entries = unwrap_entries(mhrice.get("monster_names"))
     mr_entries = unwrap_entries(mhrice.get("monster_names_mr"))
     monsters_raw = mhrice.get("monsters") or []
+    # 官方名字键（优先），掉落签名退化为校验/兜底
+    official, official_base = build_official_names(mhrice)
 
     def names_of(entries) -> dict:
         result = {}
@@ -379,12 +454,6 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
 
     base_by_num = names_of(base_entries)
     mr_by_num = names_of(mr_entries)
-    # 按**数组位置**索引的名字（基础表 + 大师表）。
-    # 小动物的 enemy_type 是这张合并表的位置索引，实测与掉落物一致：
-    #   et=66 -> 位置 66 = 丸鸟（掉落物正是「丸鸟的羽」）
-    #   et=51 -> 位置 51 = 野猪（掉落物「野猪的毛皮」）
-    # 注意不能用 names_of 得到的「编号映射」——那是另一个体系，会对错。
-    names_by_index = [strip_tags(localize(e)) for e in (base_entries + mr_entries)]
     # 索引 -> 名字（大师表按数组下标访问）
     mr_names = [strip_tags(localize(entry)) for entry in mr_entries]
     known_names = set(base_by_num.values()) | set(mr_by_num.values())
@@ -449,12 +518,22 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
         return sign
 
     monsters: dict[str, dict] = {}
+    name_conflicts: list[tuple] = []
     for index, raw in enumerate(monsters_raw):
         em = (raw.get("em_type") or {}).get("Em")
         if not isinstance(em, int) or em <= 0:
             continue
 
-        name = EM_NAME_OVERRIDES.get(em) or resolve_name(em, raw.get("enemy_type"))
+        enemy_type = raw.get("enemy_type")
+        name = (
+            official.get(enemy_type)
+            or EM_NAME_OVERRIDES.get(em)
+            or resolve_name(em, enemy_type)
+        )
+        # 官方键与掉落签名冲突时记一笔（变体名差异是正常的，所以只统计不报错）
+        sign = signature(em)
+        if sign and name and sign not in name and name not in sign:
+            name_conflicts.append((em, enemy_type, name, sign))
 
         # ---- 别名：不采用 ----
         # 这个导出文件的别名表整体错位一位（别名表[0] 是「雌火竜」，对得上
@@ -480,37 +559,21 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
             continue
         enemy_type = raw.get("enemy_type")
         # 小动物名判定顺序（按可靠性）：
-        #   1. **掉落物前缀签名** —— 小动物掉自己的素材（「丸鸟的羽」-> 丸鸟），
-        #      这是游戏一手数据，实测 37 只里 30 只可判定，且与用户看到的现象一致。
-        #   2. 名字表[enemy_type]（按数组位置）—— 兜底，只在没有签名时用。
-        #   3. SMALL_NAME_OVERRIDES —— 极少数既无签名、编号又对不上的。
+        #   1. **官方键** `EnemyIndex{enemy_type}` —— 实测 37/37 有名字
+        #   2. 大师位变体（et=48/71/74）落在名称表缺号上 → 退回基础形态名（et-1）
+        #   3. 掉落物前缀强签名 / 人工表 / 弱签名 —— 最后的保险
         #
-        # 为什么签名优先：这个导出文件的 `enemy_type` 编号**本身错乱**——
-        # 逐只核对发现，有的要 [et-2]、有的要 [et]、有的要 [et+1]，
-        # 没有任何单一公式能覆盖（同名表内部自相矛盾）。而掉落物名永远是对的。
-        # 踩过的坑：早先按位置硬写覆盖表，整体错位一位，
-        # 导致「药草」被标成毒狗龙的掉落（实际是丸鸟），24 只小动物全错。
         # 注意：掉落表的键对小动物是**负数**（见 iter_lot_rows），
-        # signature() 收的是那个键，所以要传 -ems。早先误传正数 ems，
-        # 于是签名静默失效（拿到的是大型怪的数据），整段逻辑形同虚设。
-        name = signature(-ems)  # 1) 强签名：掉落物里出现 >=2 次的本名，最可靠
-        if not name:
-            # 2) 人工核对表：掉落物不带自己名字的少数几只。
-            #    必须排在编号兜底**之前**——否则编号会先命中一个错误的怪名
-            #    （实测 Ems=3 的编号位置是「爆鳞龙」，而它其实是精灵鹿）。
-            name = SMALL_NAME_OVERRIDES.get(ems, "")
+        # signature() 收的是那个键，所以要传 -ems。
+        name = official.get(enemy_type)
         if not name and isinstance(enemy_type, int):
-            # 3) 编号兜底：名字表位置 = enemy_type - 2。
-            # 该偏移是逐只核对出来的（对 13/16/19/25/26/27/29/34/39/40/41/42/43
-            # 等已验证条目全部成立）；本文件的 enemy_type 编号体系不统一，
-            # 没有通用公式，所以只在没有强签名与人工表时使用。
-            index = enemy_type - 2
-            if 0 <= index < len(names_by_index):
-                name = names_by_index[index]
+            name = official_base.get(enemy_type - 1, "")
         if not name:
-            # 4) 弱签名：掉落物里出现过一次的已知怪名。放最后——
-            #    它容易抽到「巨大」「优质」这类通用词对应的怪，误判率高。
-            name = weak_signature(ems)
+            name = (
+                signature(-ems)
+                or SMALL_NAME_OVERRIDES.get(ems, "")
+                or weak_signature(ems)
+            )
         if not name:
             name = f"小怪{ems}"
         info = {"name": name, "kind": "small"}
@@ -518,6 +581,17 @@ def build_monsters(mhrice: dict, items: dict) -> dict:
         if habitats:
             info["maps"] = habitats
         small_monsters[str(ems)] = info
+
+    # 官方键与掉落签名不一致时打印出来备查（变体名差异属正常：
+    # 「红莲爆鳞龙」的掉落素材也叫「爆鳞龙的爆腺」）
+    if name_conflicts:
+        print(
+            f"  名字校验：{len(name_conflicts)} 只的官方名与掉落签名不同（变体名属正常）"
+        )
+        for em, enemy_type, official_name, sign in name_conflicts[:6]:
+            print(
+                f"    em={em} et={enemy_type} 官方={official_name!r} 掉落签名={sign!r}"
+            )
 
     return {"monsters": monsters, "small_monsters": small_monsters}
 
@@ -788,8 +862,12 @@ def build_official_part_names(mhrice: dict) -> dict:
     if not guid_text:
         return {}
 
-    # 2) (enemy_type, RandomId) -> 名称
-    by_enemy: dict[tuple[int, int], str] = {}
+    # 2) (Em, RandomId) -> 候选 [(enemy_type_list 长度, 名称)]
+    #
+    # ⚠️ 关键：`parts_type` 的 `enemy_type_list` 里装的是**怪物的 Em**，
+    # 不是 `monsters[].enemy_type`。早先拿它去比 `enemy_type`，
+    # 79 条记录里只有 1 条碰巧相等（火龙 em=2），整张官方名表等于空转。
+    by_enemy: dict[tuple[int, int], list[tuple[int, str]]] = {}
     table = mhrice.get("parts_type") or {}
     params = table.get("params") if isinstance(table, dict) else None
     for entry in params or []:
@@ -800,34 +878,35 @@ def build_official_part_names(mhrice: dict) -> dict:
             continue
         for info in entry.get("text_infos") or []:
             name = ""
-            for field in ("text", "text_for_monster_list"):
+            # `text` 字段的 43 个 GUID 在这份文件里**全部悬空**（只被引用、无定义），
+            # 能解析的只有 `text_for_monster_list`。
+            for field in ("text_for_monster_list", "text"):
                 guid = info.get(field)
                 if isinstance(guid, str) and guid.lower() in guid_text:
                     name = guid_text[guid.lower()]
                     break
             if not name:
                 continue
-            for enemy in info.get("enemy_type_list") or []:
+            enemies = info.get("enemy_type_list") or []
+            size = len(enemies)
+            for enemy in enemies:
                 em = (enemy or {}).get("Em")
                 if isinstance(em, int):
-                    by_enemy.setdefault((em, random_id), name)
+                    by_enemy.setdefault((em, random_id), []).append((size, name))
 
-    # 3) 按敌人类型归属到怪物：em -> enemy_type
-    enemy_type_of = {}
-    for raw in mhrice.get("monsters") or []:
-        em = (raw.get("em_type") or {}).get("Em")
-        enemy_type = raw.get("enemy_type")
-        if isinstance(em, int) and isinstance(enemy_type, int):
-            enemy_type_of[em] = enemy_type
+    # 3) 同一 (Em, RandomId) 多候选时取 enemy_type_list **最短**（最专属）的那个。
+    #    实测唯一有歧义的是雷狼龙 RandomId=0：候选「双角」(list 长度 4) 与
+    #    「头部」(长度 50)，取短的正好命中正确的「双角」。
+    best: dict[tuple[int, int], tuple[int, str]] = {}
+    for key, candidates in by_enemy.items():
+        for size, name in candidates:
+            current = best.get(key)
+            if current is None or size < current[0]:
+                best[key] = (size, name)
 
     result: dict = {}
-    for em, enemy_type in enemy_type_of.items():
-        names = {}
-        for (enemy, random_id), name in by_enemy.items():
-            if enemy == enemy_type:
-                names[str(random_id)] = name
-        if names:
-            result[em] = names
+    for (em, random_id), (_size, name) in best.items():
+        result.setdefault(em, {})[str(random_id)] = name
     return result
 
 
@@ -851,7 +930,21 @@ def build_part_names(mhrice: dict) -> dict:
     现在改成**先清洗出其中的汉字部位词**（`ダメージ部位00　頭` -> `頭`），
     只有确实提炼不出部位词时才丢弃。
     """
+    # ---- 主源：官方简中部位名（按 em_type.Em 取 parts_type 的 text_for_monster_list）----
+    # 实测覆盖 232/232 个 (Em, RandomId) 对、1027/1027 个带概率的部位破坏槽位。
     result: dict = {}
+    for em, names in build_official_part_names(mhrice).items():
+        if names:
+            result[em] = {str(k): v for k, v in names.items()}
+
+    # ---- 兜底：part_map（日文，经清洗与翻译）----
+    #
+    # ⚠️ `part_map` 的键与 `parts_break_list` 的 `RandomId` **不是同一个编号空间**，
+    # 所以直接拿 RandomId 当 part_map 的键是错的：实测 76/78 只怪的名字会因此出错
+    # （大名盾蟹 RandomId=3 → 查到 part_map["3"]="左脚"，而官方名是「背壳」，
+    #  游戏内也确实写作「部位破坏报酬：背壳」）。
+    # 官方名既然已 100% 覆盖，这里只在官方缺失时按原样查一次作保险，
+    # 不再声称它准确；查不到就留空（宁可不说，也不给错部位）。
     for raw in (mhrice.get("monsters") or []) + (mhrice.get("small_monsters") or []):
         types = raw.get("em_type") or {}
         key = types.get("Em") or types.get("Ems")
@@ -860,25 +953,16 @@ def build_part_names(mhrice: dict) -> dict:
         part_map = (raw.get("collider_mapping") or {}).get("part_map") or {}
         if not isinstance(part_map, dict):
             continue
-        # 同一个 em 可能有多条怪兽记录（基础种/变体），**合并而不是覆盖**。
-        # 踩过的坑：早先直接 result[key] = names，后一条记录会覆盖前一条，
-        # 于是角龙、妃蜘蛛这些本来有完整 part_map 的怪反而没有部位名。
         names = result.setdefault(key, {})
         for random_id, values in part_map.items():
+            if names.get(str(random_id)):
+                continue
             if not isinstance(values, list) or not values:
                 continue
             cleaned = clean_part_label(str(values[0]).strip())
             translated = translate_part(cleaned) if cleaned else ""
-            # 已有更好（非空）的名字时不覆盖
-            if translated and not names.get(str(random_id)):
+            if translated:
                 names[str(random_id)] = translated
-
-    # 用官方名表补 part_map 查不到的空缺（只补空，不覆盖）
-    for em, official in build_official_part_names(mhrice).items():
-        names = result.setdefault(em, {})
-        for random_id, name in official.items():
-            if name and not names.get(random_id):
-                names[random_id] = name
 
     return {key: names for key, names in result.items() if names}
 
@@ -1248,6 +1332,106 @@ def build_gathering_nodes(mhrice: dict, map_names: dict) -> dict:
     return result
 
 
+def meat_part_zh(raw_name: str) -> str:
+    """肉质表的部位名（日文）-> 中文；翻不出或属内部标记时返回空字符串。
+
+    meat_map 的值形如 `A：頭部_肉質`、`背中（帯電部位）`、`爪（破壊後）`、
+    `腹部（繭化状態中）1`、`矢弾き用`、`RabbitConverted - 頭部`，
+    所以要先去前缀/下标/状态注解，再翻译。**绝不把日文原样显示给用户。**
+    """
+    text = str(raw_name or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^[A-Z]：", "", text)  # "A：" 编号前缀
+    text = text.split("_")[0]  # "_肉質" 这类后缀
+    text = re.sub(r"^RabbitConverted\s*-\s*", "", text)  # 内部调试名
+    text = re.sub(r"[（(][^）)]*[）)]", "", text)  # 状态注解
+    text = re.sub(r"\d+$", "", text).strip()  # 尾部编号
+    if not text:
+        return ""
+    translated = translate_part(text)
+    return translated or ""
+
+
+def build_weakness(mhrice: dict) -> dict:
+    """em -> 弱点汇总。
+
+    ## 数据形态
+
+    弱点不是一张独立的表，而是每个怪物条目里的**肉质表**：
+
+        monsters[].meat_data.meat_container[部位下标].meat_group_info[状态变体]
+            {"slash":46, "strike":48, "shell":45,      # 斩击 / 打击 / 射击
+             "fire":15, "water":0, "ice":15, "elect":0, "dragon":25}
+
+    数值是 0–100 的肉质（0 = 完全无效，实测爵银龙对水与雷全列 0；
+    角龙对火全列 0）；**雷的键名是 `elect`**，不是 thunder。
+    部位名在 `collider_mapping.meat_map`（日文，如「A：頭」）。
+
+    ## 为什么只取第一个变体
+
+    同一个部位有 1–7 个「状态变体」，但**源数据里没有任何字段**说明哪个变体
+    对应哪个状态（愤怒 / 带电 / 部位破坏后…）。所以只取 `meat_group_info[0]`
+    （通常状态）并在卡片上注明——不猜。
+
+    `piyo` 是本表第 9 个键，取值 {0,25,50,100,120,200}，语义在这份文件里
+    无从确定，因此**不输出**。
+
+    返回 {"elements": {...}, "motion": {...}, "part": {...}, "immune": [...]}，
+    没有 meat_data 的怪物返回 None。
+    """
+    result: dict = {}
+    element_keys = ("fire", "water", "ice", "elect", "dragon")
+    motion_keys = ("slash", "strike", "shell")
+
+    for raw in mhrice.get("monsters") or []:
+        em = (raw.get("em_type") or {}).get("Em")
+        if not isinstance(em, int):
+            continue
+        container = ((raw.get("meat_data") or {}).get("meat_container")) or []
+        if not container:
+            result[em] = None
+            continue
+        meat_map = (raw.get("collider_mapping") or {}).get("meat_map") or {}
+
+        elements: dict[str, int] = {}
+        motion: dict[str, int] = {}
+        part: dict[str, str] = {}
+        for index, slot in enumerate(container):
+            groups = (slot or {}).get("meat_group_info") or []
+            if not groups:
+                continue
+            info = groups[0] if isinstance(groups[0], dict) else {}
+            part_name = ""
+            names = meat_map.get(str(index)) or []
+            if isinstance(names, list) and names:
+                part_name = meat_part_zh(str(names[0]))
+            for key in element_keys:
+                value = info.get(key)
+                if isinstance(value, int) and value > elements.get(key, -1):
+                    elements[key] = value
+                    part[key] = part_name
+            for key in motion_keys:
+                value = info.get(key)
+                if isinstance(value, int) and value > motion.get(key, -1):
+                    motion[key] = value
+                    if key not in part:
+                        part[key] = part_name
+
+        if not elements:
+            result[em] = None
+            continue
+        # 免疫：全部位恒为 0 的属性
+        immune = [k for k in element_keys if elements.get(k) == 0]
+        result[em] = {
+            "elements": {k: elements.get(k, 0) for k in element_keys},
+            "motion": {k: motion.get(k, 0) for k in motion_keys},
+            "part": {k: v for k, v in part.items() if v},
+            "immune": immune,
+        }
+    return result
+
+
 def build_map_names(mhrice: dict) -> tuple[dict, dict]:
     """从源数据读地图名；源数据缺的编号用推断值补齐。
 
@@ -1595,6 +1779,9 @@ def build_snapshot(
 
     # 怪物只保留有掉落的，其余是环境生物
     carried = previous_map_names or {}
+    weakness = build_weakness(mhrice)
+    weakness_count = sum(1 for v in weakness.values() if v)
+    print(f"  弱点汇总: {weakness_count} 只（只取通常状态的肉质）")
     monsters_out = {}
     for em, info in monsters.items():
         drops = monster_drops.get(em)
@@ -1604,6 +1791,9 @@ def build_snapshot(
         names = entry.get("map_names") or carried.get(f"monsters:{em}") or []
         if names:
             entry["map_names"] = names
+        weak = weakness.get(int(em))
+        if weak:
+            entry["weakness"] = weak
         monsters_out[em] = entry
     print(f"  快照内怪物: {len(monsters_out)} 只大型")
 
@@ -1629,10 +1819,30 @@ def build_snapshot(
         for number, name in sorted(maps.items())
     }
 
+    # 装备数据（武器 / 装饰品）。反查索引不进快照，由 data.py 加载时现算。
+    equipment = build_equipment_block(mhrice, items_json)
+    print(
+        f"  武器: {len(equipment['weapons'])} 把"
+        f"（怪异炼化共享表 {len(equipment['qurious_tables'])} 张）"
+    )
+    print(f"  装饰品: {len(equipment['decorations'])} 个")
+
+    # 素材的类别（「类别需求」反查需在加载时用到它，如 ["矿石素材"]）
+    for item_id, entry in items_out.items():
+        raw = items_json.get(str(item_id))
+        if isinstance(raw, dict):
+            categories = raw.get("material_category")
+            if categories:
+                entry["categories"] = categories
+
+    # 繁→简映射（供查询归一化用），由数据自身的繁/简并列文本生成
+    trad_simp = build_trad_simp(mhrice)
+    print(f"  繁→简映射: {len(trad_simp)} 对（由数据自带文本生成）")
+
     return {
         "meta": {
             "schema": 1,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "generator": "astrbot_plugin_mh_material/tools/extract.py",
             "game": "Monster Hunter Rise: Sunbreak",
             "source_files": {
@@ -1654,11 +1864,129 @@ def build_snapshot(
             "small_monsters": small_out,
             "quests": quests,
             "maps": maps_out,
+            "weapons": equipment["weapons"],
+            "qurious_tables": equipment["qurious_tables"],
+            "decorations": equipment["decorations"],
+            "deco_index": equipment["deco_index"],
+            "trad_simp": trad_simp,
             "quest_type_labels": QUEST_TYPE_LABELS,
             "rank_labels": RANK_LABELS,
             "source_labels": {key: label for key, label in SOURCE_KINDS},
         },
     }
+
+
+def build_trad_simp(mhrice: dict) -> dict:
+    """从游戏数据自己的繁/简并列文本生成「繁体字 → 简体字」映射。
+
+    每个 `entries[].content` 都是 33 种语言并列，实测 **[12] = 繁體中文、
+    [13] = 简体中文**。
+
+    ## 必须加的三道过滤
+
+    最初的做法是把两者**逐字符位置对齐**、把所有差异按票数取最高频，
+    结果 1325 条里有 **517 条反向自相矛盾**，配对荒谬（`原→硬`、`角→甲`、
+    `之→的`）。根因是：说明类文本的繁简差异是**换词**而不是换字形，
+    一旦换词，后面的字符就整体错位，于是产出大量垃圾对应。
+
+    所以现在：
+
+    1. **只用名称表**（表名含 `name`）——名称短、繁简是同一个词，对齐可靠；
+    2. **差异位数 <= 2**——差异更多的多半不是同一个词；
+    3. **全票通过且票数 >= 3**——同一个字出现两种对应关系就丢弃；
+    4. **双向一致**——若 `a→b` 与 `b→a` 同时出现，两个都丢。
+
+    实测过滤后留下约 300 条，全部是正常的繁简对应（劍→剑、龍→龙…）。
+    """
+    votes: dict[str, dict[str, int]] = {}
+    for table_name, table in mhrice.items():
+        if "name" not in str(table_name):
+            continue
+        if not isinstance(table, dict):
+            continue
+        entries = table.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            content = (entry or {}).get("content")
+            if not isinstance(content, list) or len(content) < 14:
+                continue
+            traditional, simplified = content[12], content[13]
+            if not isinstance(traditional, str) or not isinstance(simplified, str):
+                continue
+            if not traditional or not simplified:
+                continue
+            if len(traditional) != len(simplified):
+                continue
+            diffs = [(a, b) for a, b in zip(traditional, simplified) if a != b]
+            if not diffs or len(diffs) > 2:
+                continue
+            for old, new in diffs:
+                votes.setdefault(old, {})[new] = votes.get(old, {}).get(new, 0) + 1
+
+    result: dict[str, str] = {}
+    for traditional, counter in votes.items():
+        pick, count = max(counter.items(), key=lambda kv: kv[1])
+        if count < 3:
+            continue
+        if count != sum(counter.values()):
+            continue
+        result[traditional] = pick
+
+    # 双向一致性：a->b 与 b->a 同时存在说明至少一个是错的，两个都丢
+    for source, target in list(result.items()):
+        if result.get(target) == source:
+            result.pop(source, None)
+    # 目标字本身也是「繁体源」时说明它不是简体字，丢弃
+    for source, target in list(result.items()):
+        if target in result:
+            result.pop(source, None)
+    return result
+
+
+def build_equipment_block(mhrice: dict, items: dict) -> dict:
+    """装备数据（武器 / 装饰品），含两项必要的压缩。
+
+    ## 为什么必须压缩
+
+    按接口契约（`_spec_v130.md`）直译出来是 **5.39 MB**，其中：
+
+    * `material_recipes`（素材→配方反查索引）**3.21 MB** —— 11.7 万条引用；
+    * `weapons` **2.13 MB**，其中 `qurious` 约占 0.4 MB —— 887 把武器
+      **各自存了一份 35 项的怪异炼化素材并集**，而这些配方其实只来自
+      58 张共享表（`custom_buildup_wep_table` 的 `table_no`）。
+
+    两项处理：
+
+    1. **反查索引不进快照**——它完全可以从武器配方推导，`data.py` 在加载时
+       现算一遍（3953 把武器扫一次是毫秒级）。直接丢弃 `material_recipes`。
+    2. **怪异炼化配方抽成共享表** `qurious_tables`，武器只存一个 `qurious` 表号；
+       按配方内容去重（内容相同的表号直接复用）。
+
+    实测这两步把装备块从 5.39 MB 压到约 1.8 MB。
+    """
+    from extract_equipment import build_equipment
+
+    equipment = build_equipment(mhrice, items)
+    equipment.pop("material_recipes", None)
+
+    shared: dict[str, dict] = {}
+    signature_of: dict[str, str] = {}
+    for weapon in equipment["weapons"].values():
+        recipes = weapon.get("recipes") or {}
+        qurious = recipes.pop("qurious", None)
+        if not qurious:
+            continue
+        # 按内容去重：内容相同的不同 table_no 复用同一条
+        signature = json.dumps(qurious, ensure_ascii=False, sort_keys=True)
+        table_id = signature_of.get(signature)
+        if table_id is None:
+            table_id = str(len(shared))
+            signature_of[signature] = table_id
+            shared[table_id] = qurious
+        weapon["qurious"] = table_id
+    equipment["qurious_tables"] = shared
+    return equipment
 
 
 def default_source_dir() -> Path:

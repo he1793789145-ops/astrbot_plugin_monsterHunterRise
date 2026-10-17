@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +42,12 @@ EXPECTED = {
     "small_monsters": 20,
     "quests": 500,
     "maps": 10,
+    # V1.3.0 新增数据块。武器有配方的实测 3924 把、装饰珠 278 个、
+    # 怪异炼化共享表 19 张、繁简映射 200 对——这里取下限留出余量。
+    "weapons": 3500,
+    "decorations": 250,
+    "qurious_tables": 10,
+    "trad_simp": 100,
 }
 
 
@@ -83,12 +90,25 @@ def verify(path: Path, skip_fetch: bool = False) -> bool:
 
     print("\n[rebuild] 附加数据校验")
     with_anomaly = sum(1 for v in items.values() if v.get("anomaly_rewards"))
+    with_weakness = sum(1 for v in monsters.values() if v.get("weakness"))
+    # 部位名必须是官方简中（parts_type 按 em_type.Em 取 text_for_monster_list）。
+    # 这里顺带守住「不许漏日文」这条底线。
+    japanese = re.compile(r"[\u3040-\u30ff]")
+    part_labels = [
+        d.get("kind_label") or ""
+        for v in monsters.values()
+        for d in (v.get("drops") or [])
+        if d.get("kind") == "parts_break_reward"
+    ]
+    leaked = sum(1 for label in part_labels if japanese.search(label))
     checks = [
         # 野外采集点与傀异调查报酬都来自游戏本体数据，不联网。
         # `item_pop_lot` 覆盖 180 个物品，但快照只收素材类，实测约 82 个。
         ("野外采集点（含节点）", with_nodes, 75),
         ("部位破坏/剥取细分", with_part, 900),
         ("傀异调查报酬", with_anomaly, 50),
+        # V1.3.0：弱点汇总。肉质表覆盖全部大型怪，实测 78/78。
+        ("怪物弱点汇总", with_weakness, 70),
     ]
     if not skip_fetch:
         # 栖息地图来自联网抓取；--skip-fetch 时本次没跑它，不该判为失败
@@ -99,6 +119,11 @@ def verify(path: Path, skip_fetch: bool = False) -> bool:
         if count < minimum:
             ok = False
         print(f"  {flag} {label}: {count} 条素材/怪物（期望 >= {minimum}）")
+    # 部位名绝不能把日文原文漏给用户（这条曾经真实发生过）
+    flag = "OK " if leaked == 0 else "泄漏"
+    if leaked:
+        ok = False
+    print(f"  {flag} 部位名日文泄漏: {leaked} 条（期望 0）")
     if skip_fetch:
         print("  （--skip-fetch：跳过联网数据项的校验）")
     return ok

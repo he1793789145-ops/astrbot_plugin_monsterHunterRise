@@ -147,9 +147,15 @@ def glyph_for(title: str) -> str:
 
 @dataclass
 class Line:
-    """卡片里的一行：由若干段不同样式的文本组成。"""
+    """卡片里的一行：由若干段不同样式的文本组成。
+
+    约定（沿用既有命令层的数据）：第一段若是 `rank` 样式就当作难度前缀，
+    最后一段若是 `chance` 样式或长得像百分比，就右对齐并画刻度轨。
+    """
 
     segments: list[tuple[str, str]] = field(default_factory=list)
+    # 该行的图标；留空则由所属 Section 的 glyph 决定（图标轨道要保持同列）
+    icon: str = ""
 
     @staticmethod
     def of(*segments: tuple[str, str]) -> Line:
@@ -158,13 +164,23 @@ class Line:
 
 @dataclass
 class Section:
-    """卡片里的一个分区（例如一只怪物、一个任务）。"""
+    """卡片里的一个分区（例如一只怪物、一个素材、一把武器）。
+
+    `kind` 决定块体的画法：
+      * `rows`（默认）—— 连续台账行：发丝线 + 斑马纹 + 左侧图标轨道
+      * `sharpness`    —— 锋利度 7 色条（数据放 `data["values"]`）
+      * `slots`        —— 孔位菱形（数据放 `data["normal"]` / `data["rampage"]`）
+    """
 
     title: str
     lines: list[Line] = field(default_factory=list)
     highlight: bool = False
     footer: str = ""
     glyph: str = ""
+    kind: str = "rows"
+    data: dict = field(default_factory=dict)
+    # 块标题右侧的计数文字（如「2 种」「全部」）
+    count: str = ""
 
 
 @dataclass
@@ -178,6 +194,10 @@ class Card:
     # 怪猎化的可选字段；缺失时不影响渲染
     rarity: int | None = None
     badge: str = ""
+    # 指标条：[(标签, 值), ...]，竖线分隔。
+    # 它取代了此前用中缀点拼接的 subtitle —— 「A · B · C」是最像
+    # 生成式模板的一处写法，且竖线分隔更省高度、更易扫读。
+    metrics: list[tuple[str, str]] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -280,6 +300,17 @@ class Canvas:
 
     def finish(self) -> Image.Image:
         return self.image.resize((self.width, self.height), Image.LANCZOS)
+
+    def crop_to(self, height: int) -> None:
+        """按实际用到的光标位置裁掉多余画布。
+
+        早先的做法是先用 `measure()` 预估高度再按预估建画布，但「预估」与
+        「绘制」是两套算术，必然漂移——实测卡片底部的说明文字与脚注被整段裁掉。
+        现在改成：先在超高画布上正常画，最后按真实光标位置裁。
+        """
+        height = max(1, min(int(height), self.height))
+        self.height = height
+        self.image = self.image.crop((0, 0, self.width * SS, height * SS))
 
 
 def draw_hatch(canvas: Canvas, box, color, step=22, width=1) -> None:
@@ -775,6 +806,568 @@ class CardRenderer:
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# 「公会台账」渲染器（V1.3.0 起的主渲染路径）
+#
+# 与旧渲染器的区别在于**块内不再一行一框**：块标题是一条金色小切角标，
+# 块体是连续台账行（发丝线 + 斑马纹 + 左侧图标轨道）。同样 10 个素材块，
+# 高度约压掉 40%（实测怪物卡 2000px -> 892px）。
+# --------------------------------------------------------------------------
+
+LEDGER_WIDTH = 940
+
+# 台账专用色（其余沿用 COLORS）
+LEDGER = {
+    "row_alt": (30, 34, 41),  # 斑马纹
+    "hair": (52, 58, 66),  # 分隔线
+    "row_hair": (38, 43, 50),  # 行间发丝线
+    "tag_bg": (34, 30, 22),  # 标签底色
+    "gold_dim": (110, 90, 48),  # 标签描边
+    "rampage_slot": (150, 120, 200),
+    # 锋利度 7 色。顺序 0..6 = 赤 橙 黄 緑 青 白 紫，
+    # 由数据内证据确认：双剑有一批调试行直接写着「斬れ味テスト 紫→赤/青/緑/黄/橙」
+    # 与「白→緑/黄/橙」，两个独立锚点推出的顺序完全一致。
+    "sharpness": [
+        (192, 57, 43),
+        (217, 120, 45),
+        (217, 194, 45),
+        (76, 166, 76),
+        (61, 127, 217),
+        (232, 232, 232),
+        (142, 91, 217),
+    ],
+}
+
+ICON_RAIL = 22
+# 行带在字形上下各留的像素。别再往下压到 2px 以下——实测余量 1.7px 时
+# 视觉上就像下一行的底色压住了上一行文字的底部（用户报过这个）。
+ROW_BAND_PAD = 4
+ROW_GAP = 5
+
+
+def _slots_text(slots) -> str:
+    """`slot_num_list` -> 「Lv2 ×1  Lv4 ×1」。
+
+    读法：**下标 = 等级-1，值 = 该等级孔的个数**。这是由 4 条硬约束导出的
+    唯一自洽读法：值域只到 3、`sum <= 3`、而装饰珠里确实存在 lv4 孔——
+    若按「第 i 个孔的等级」读，就根本无法表示 lv4。
+    """
+    return "  ".join(
+        f"Lv{level} ×{count}"
+        for level, count in enumerate(slots or [], start=1)
+        if count
+    )
+
+
+def glyph_span(font) -> tuple[float, float]:
+    """字体的字形纵向范围（相对绘制原点，逻辑像素）。
+
+    这是本文件里**唯一**的纵向度量真值来源。踩过的坑见 `text_in_box`。
+    """
+    box = font.getbbox("测试国")
+    return box[1] / SS, box[3] / SS
+
+
+def text_in_box(
+    canvas: Canvas,
+    x: float,
+    y: float,
+    text: str,
+    font,
+    *,
+    pad_x: float = 14,
+    pad_y: float = 5,
+    chamfer: float = 5,
+    box_fill=None,
+    outline=None,
+    color=None,
+) -> float:
+    """画一个「完整包住文字」的切角标签框，返回框的右边界。
+
+    ## 为什么需要它
+
+    PIL 的 `draw.text(xy, ...)` 把 xy 当**绘制原点**，不是字形上沿——msyh 的
+    字形上沿在原点之下约 0.25em、下沿约 1.22em。所以手写框高必然出错，实测
+    连踩三次：
+
+    * 块标题：字号 24 的字形实际 23.3px 高、下沿 +29.3，框却写死 22px
+      → 字比框还高，框只兜住上半；
+    * 行内标签：字号 18，框高 22、文字画在 +2，字形下沿 +24 → 超出框底 1px；
+    * 右上角标签：字号 13，框高 22、文字画在 +9 → 离框底仅 2px，明显偏下。
+
+    现在框高 = 字形高 + pad_y*2，文字的绘制原点由字形上沿反推，
+    **文字永远在框里居中**，不需要任何手写高度。
+    """
+    top, bottom = glyph_span(font)
+    box_height = (bottom - top) + pad_y * 2
+    x1 = x + canvas.textlength(text, font) + pad_x * 2
+    canvas.polygon(
+        chamfer_points(x, y, x1, y + box_height, chamfer),
+        fill=box_fill,
+        outline=outline,
+        width=1,
+    )
+    canvas.text((x + pad_x, y + pad_y - top), text, font, color)
+    return x1
+
+
+class LedgerRenderer:
+    """「公会台账」：块标题 = 金色切角标，块体 = 连续台账行。"""
+
+    # 先画在超高画布上，最后按真实光标裁剪（见 Canvas.crop_to）
+    PROBE_HEIGHT = 9000
+
+    def __init__(self, width: int = LEDGER_WIDTH) -> None:
+        self.width = width
+        self.f_title = load_font(FONT_TITLE * SS, bold=True)
+        self.f_masthead = load_font(FONT_MASTHEAD * SS, bold=True)
+        self.f_metric_v = load_font(22 * SS, bold=True)
+        self.f_metric_k = load_font(16 * SS)
+        self.f_section = load_font(FONT_SECTION * SS, bold=True)
+        self.f_body = load_font(FONT_BODY * SS)
+        self.f_small = load_font(FONT_SMALL * SS)
+        self.f_tag = load_font(13 * SS, bold=True)
+        self.body_span = glyph_span(self.f_body)
+        self.body_band = (self.body_span[1] - self.body_span[0]) + ROW_BAND_PAD * 2
+
+    # ---- 主入口 ---------------------------------------------------------
+
+    def render(self, card: Card) -> str:
+        """渲染并返回**PNG 文件路径**（命令层直接把它交给 event.image_result）。"""
+        canvas = Canvas(self.width, self.PROBE_HEIGHT)
+        cursor = self._header(canvas, card)
+        if card.metrics:
+            cursor = self._metrics(canvas, card.metrics, cursor)
+        elif card.subtitle:
+            cursor = self._subtitle(canvas, card.subtitle, cursor)
+        for section in card.sections:
+            if section.kind == "sharpness":
+                cursor = self._sharpness(canvas, section, cursor)
+            elif section.kind == "slots":
+                cursor = self._slots(canvas, section, cursor)
+            elif section.kind == "grid":
+                cursor = self._grid(canvas, section, cursor)
+            else:
+                cursor = self._block(canvas, section, cursor)
+        if card.footnote:
+            cursor = self._footnote(canvas, card.footnote, cursor)
+        canvas.crop_to(cursor + MARGIN)
+
+        image = canvas.finish()
+        out_dir = Path(tempfile.gettempdir()) / "mh_material_cards"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = (
+            out_dir
+            / f"mh_{abs(hash((card.title, card.subtitle, len(card.sections))))}.png"
+        )
+        image.save(out_path, "PNG")
+        return str(out_path)
+
+    # ---- 报头 -----------------------------------------------------------
+
+    def _header(self, canvas: Canvas, card: Card) -> float:
+        cursor = 20.0
+        crest = 30
+        draw_crest(
+            canvas,
+            MARGIN + crest / 2,
+            cursor + crest / 2,
+            crest,
+            COLORS["gold"],
+            COLORS["gold_bright"],
+        )
+        canvas.tracked(
+            (MARGIN + crest + 12, cursor + 10),
+            "MONSTER HUNTER RISE",
+            self.f_masthead,
+            COLORS["gold"],
+            tracking=3.2,
+        )
+        if card.badge:
+            text_width = canvas.textlength(card.badge, self.f_tag)
+            x1 = self.width - MARGIN
+            text_in_box(
+                canvas,
+                x1 - text_width - 20,
+                cursor + 5,
+                card.badge,
+                self.f_tag,
+                pad_x=10,
+                pad_y=4,
+                chamfer=4,
+                box_fill=LEDGER["tag_bg"],
+                outline=LEDGER["gold_dim"],
+                color=COLORS["gold_bright"],
+            )
+        cursor += 36
+        canvas.text((MARGIN, cursor), card.title, self.f_title, COLORS["title"])
+        cursor += FONT_TITLE + 10
+        if card.rarity:
+            end = draw_rarity(canvas, MARGIN, cursor + 3, card.rarity)
+            color = RARITY_COLORS[min(max(card.rarity, 1), 10) - 1]
+            canvas.text((end + 12, cursor), str(card.rarity), self.f_metric_v, color)
+            cursor += 22 + 10
+        return cursor + 4
+
+    # ---- 指标条 ---------------------------------------------------------
+
+    def _metrics(self, canvas: Canvas, metrics, top: float) -> float:
+        y = top + 6
+        x = float(MARGIN)
+        for index, (label, value) in enumerate(metrics):
+            if index:
+                canvas.line([(x, y + 1), (x, y + 26)], LEDGER["hair"], width=1)
+                x += 14
+            canvas.text((x, y + 3), label, self.f_metric_k, COLORS["muted"])
+            x += canvas.textlength(label, self.f_metric_k) + 6
+            canvas.text((x, y), value, self.f_metric_v, COLORS["title"])
+            x += canvas.textlength(value, self.f_metric_v) + 14
+        y += 22 + 8
+        canvas.line([(MARGIN, y), (self.width - MARGIN, y)], LEDGER["hair"], width=1)
+        return y + 14
+
+    def _subtitle(self, canvas: Canvas, subtitle: str, top: float) -> float:
+        canvas.text((MARGIN, top + 4), subtitle, self.f_small, COLORS["muted"])
+        return top + FONT_SMALL + 16
+
+    # ---- 台账块 ---------------------------------------------------------
+
+    def _block(self, canvas: Canvas, section: Section, top: float) -> float:
+        y = self._block_title(canvas, section, top)
+
+        inner_left = MARGIN
+        inner_right = self.width - MARGIN
+        text_left = inner_left + ICON_RAIL + 8
+        value_right = inner_right - 4
+        icon_kind = section.glyph or "note"
+        band = self.body_band
+
+        for index, line in enumerate(section.lines):
+            # 斑马纹严格覆盖「行带」——带高按字形算，字形完整落在带内。
+            # 早先按固定行距排、底色只留不到 2px 余量，看起来就像
+            # 下一行的底色压住了上一行文字的底部。
+            if index % 2:
+                canvas.rect(
+                    (
+                        inner_left - 4,
+                        y - ROW_BAND_PAD / 2,
+                        inner_right,
+                        y - ROW_BAND_PAD / 2 + band,
+                    ),
+                    fill=LEDGER["row_alt"],
+                )
+            draw_glyph(
+                canvas,
+                line.icon or icon_kind,
+                inner_left + 4,
+                y + 3,
+                13,
+                COLORS["gold"],
+                COLORS["gold_bright"],
+            )
+
+            x = text_left
+            segments = list(line.segments)
+            value_text = ""
+            percent = None
+            if segments:
+                last_text, last_style = segments[-1]
+                parsed = parse_percent(last_text)
+                if last_style in ("chance", "value") or parsed is not None:
+                    value_text = last_text
+                    percent = parsed
+                    segments = segments[:-1]
+
+            for segment_text, segment_style in segments:
+                if segment_style == "rank":
+                    canvas.text(
+                        (x, y), segment_text + " · ", self.f_body, COLORS["rank"]
+                    )
+                    x += canvas.textlength(segment_text + " · ", self.f_body)
+                elif segment_style in ("tag", "label"):
+                    # 行内小标签用切角框，框高同样由字形推出
+                    x = (
+                        text_in_box(
+                            canvas,
+                            x,
+                            y - 1,
+                            segment_text,
+                            self.f_small,
+                            pad_x=7,
+                            pad_y=3,
+                            chamfer=4,
+                            outline=LEDGER["gold_dim"],
+                            color=COLORS["gold"],
+                        )
+                        + 8
+                    )
+                else:
+                    color = (
+                        COLORS["muted"] if segment_style == "muted" else COLORS["text"]
+                    )
+                    canvas.text((x, y), segment_text, self.f_body, color)
+                    x += canvas.textlength(segment_text, self.f_body)
+
+            if value_text:
+                value_width = canvas.textlength(value_text, self.f_body)
+                value_x = value_right - value_width
+                canvas.text(
+                    (value_x, y),
+                    value_text,
+                    self.f_body,
+                    COLORS["chance"] if percent is not None else COLORS["text"],
+                )
+            if percent is not None:
+                # 量条必须放在**数值文本左侧**，不能按固定偏移——
+                # 数值是按自身宽度右对齐的，固定偏移会让量条压住文字
+                # （实测「80%」宽约 40px，与固定偏移的量条重叠 14px）。
+                gauge_right = (value_x if value_text else value_right) - 10
+                self._gauge(
+                    canvas, gauge_right - GAUGE_MAX, y + 8, percent, section.lines
+                )
+
+            if index < len(section.lines) - 1:
+                canvas.line(
+                    [
+                        (text_left, y + band + ROW_GAP / 2 - ROW_BAND_PAD / 2),
+                        (inner_right, y + band + ROW_GAP / 2 - ROW_BAND_PAD / 2),
+                    ],
+                    LEDGER["row_hair"],
+                    width=1,
+                )
+            y += band + ROW_GAP
+
+        if section.footer:
+            canvas.text(
+                (text_left, y + 2), section.footer, self.f_small, COLORS["faint"]
+            )
+            y += FONT_SMALL + 8
+        return y + 12
+
+    def _block_title(self, canvas: Canvas, section: Section, top: float) -> float:
+        """画块标题（金色切角标 + 左侧短横 + 右侧计数），返回块体起始 y。"""
+        y = top
+        text_in_box(
+            canvas,
+            MARGIN,
+            y,
+            section.title,
+            self.f_section,
+            pad_x=18,
+            pad_y=6,
+            chamfer=8,
+            box_fill=LEDGER["tag_bg"],
+            outline=COLORS["gold_bright"] if section.highlight else LEDGER["gold_dim"],
+            color=COLORS["gold_bright"] if section.highlight else COLORS["title"],
+        )
+        if section.count:
+            count_width = canvas.textlength(section.count, self.f_small)
+            canvas.text(
+                (self.width - MARGIN - count_width, y + 10),
+                section.count,
+                self.f_small,
+                COLORS["faint"],
+            )
+        top_span, bottom_span = glyph_span(self.f_section)
+        mid = y + 6 - top_span + (bottom_span - top_span) / 2 + top_span
+        canvas.line(
+            [(MARGIN + 7, mid), (MARGIN + 14, mid)], COLORS["gold_bright"], width=2
+        )
+        return y + 6 + (bottom_span - top_span) + 6 + 8
+
+    def _grid(self, canvas: Canvas, section: Section, top: float) -> float:
+        """两列台账：短条目（系统标签 + 名称 + 稀有度）一行放两个。
+
+        带武器类型时语义是「该类型全部」（用户明确要求），实测「怪异化的皮」
+        的太刀类有 67 件，单列会到 2547px。两列把它压到约一半，
+        而**语义不变**——仍然全部列出。
+        """
+        y = self._block_title(canvas, section, top)
+        inner_left = MARGIN
+        inner_right = self.width - MARGIN
+        text_left = inner_left + ICON_RAIL + 8
+        column_width = (inner_right - text_left) / 2
+        band = self.body_band
+        icon_kind = section.glyph or "note"
+
+        for index in range(0, len(section.lines), 2):
+            if (index // 2) % 2:
+                canvas.rect(
+                    (
+                        inner_left - 4,
+                        y - ROW_BAND_PAD / 2,
+                        inner_right,
+                        y - ROW_BAND_PAD / 2 + band,
+                    ),
+                    fill=LEDGER["row_alt"],
+                )
+            for column, line in enumerate(section.lines[index : index + 2]):
+                cell_x = text_left + column * column_width
+                cell_right = cell_x + column_width - 14
+                draw_glyph(
+                    canvas,
+                    line.icon or icon_kind,
+                    cell_x - ICON_RAIL,
+                    y + 3,
+                    13,
+                    COLORS["gold"],
+                    COLORS["gold_bright"],
+                )
+                x = cell_x
+                segments = list(line.segments)
+                value_text = ""
+                if segments:
+                    last_text, last_style = segments[-1]
+                    if last_style in ("chance", "value"):
+                        value_text = last_text
+                        segments = segments[:-1]
+                for segment_text, segment_style in segments:
+                    if segment_style in ("tag", "label"):
+                        x = (
+                            text_in_box(
+                                canvas,
+                                x,
+                                y - 1,
+                                segment_text,
+                                self.f_small,
+                                pad_x=6,
+                                pad_y=3,
+                                chamfer=4,
+                                outline=LEDGER["gold_dim"],
+                                color=COLORS["gold"],
+                            )
+                            + 7
+                        )
+                    else:
+                        color = (
+                            COLORS["muted"]
+                            if segment_style == "muted"
+                            else COLORS["text"]
+                        )
+                        canvas.text((x, y), segment_text, self.f_body, color)
+                        x += canvas.textlength(segment_text, self.f_body)
+                if value_text:
+                    value_width = canvas.textlength(value_text, self.f_body)
+                    canvas.text(
+                        (cell_right - value_width, y),
+                        value_text,
+                        self.f_body,
+                        COLORS["text"],
+                    )
+            if index + 2 < len(section.lines):
+                canvas.line(
+                    [
+                        (text_left, y + band + ROW_GAP / 2 - ROW_BAND_PAD / 2),
+                        (inner_right, y + band + ROW_GAP / 2 - ROW_BAND_PAD / 2),
+                    ],
+                    LEDGER["row_hair"],
+                    width=1,
+                )
+            y += band + ROW_GAP
+
+        if section.footer:
+            canvas.text(
+                (text_left, y + 2), section.footer, self.f_small, COLORS["faint"]
+            )
+            y += FONT_SMALL + 8
+        return y + 12
+
+    def _gauge(self, canvas: Canvas, x: float, y: float, percent: float, lines) -> None:
+        """带刻度的细轨：长度按本块最大值相对缩放，每 25% 一个 tick。"""
+        peaks = []
+        for line in lines:
+            if line.segments:
+                value = parse_percent(line.segments[-1][0])
+                if value is not None:
+                    peaks.append(value)
+        peak = max(peaks) if peaks else 100.0
+        ratio = min(max(percent / peak, 0.0), 1.0) if peak else 0.0
+        length = max(5.0, GAUGE_MAX * ratio)
+        canvas.rect((x, y, x + length, y + 4), fill=COLORS["chance"])
+        canvas.rect((x, y + 6, x + GAUGE_MAX, y + 7), fill=(44, 50, 58))
+        for tick in range(1, 4):
+            tick_x = x + GAUGE_MAX * tick / 4
+            canvas.line([(tick_x, y + 5), (tick_x, y + 8)], (70, 78, 88), width=1)
+
+    # ---- 锋利度 ---------------------------------------------------------
+
+    def _sharpness(self, canvas: Canvas, section: Section, top: float) -> float:
+        y = top + 4
+        canvas.text(
+            (MARGIN, y), section.title or "锋利度", self.f_small, COLORS["muted"]
+        )
+        values = section.data.get("values") or []
+        x = MARGIN + 72
+        bar_width = self.width - MARGIN - x - 12
+        bar_height = 14
+        total = sum(values) or 1
+        last_color = (60, 60, 60)
+        for index, value in enumerate(values):
+            if not value or index >= len(LEDGER["sharpness"]):
+                continue
+            width = bar_width * value / total
+            canvas.rect(
+                (x, y - 1, x + width, y - 1 + bar_height),
+                fill=LEDGER["sharpness"][index],
+            )
+            last_color = LEDGER["sharpness"][index]
+            x += width
+        # 收尾尖角：用最后一段的颜色压暗，模拟游戏里的刀尖收束
+        dim = tuple(int(channel * 0.55) for channel in last_color)
+        canvas.polygon(
+            [(x, y - 1), (x + 7, y - 1 + bar_height / 2), (x, y - 1 + bar_height)],
+            fill=dim,
+        )
+        y += bar_height + 8
+        if section.footer:
+            canvas.text((MARGIN, y), section.footer, self.f_small, COLORS["faint"])
+            y += FONT_SMALL + 6
+        return y + 12
+
+    # ---- 孔位 -----------------------------------------------------------
+
+    def _slots(self, canvas: Canvas, section: Section, top: float) -> float:
+        """孔位用**文字**显示。
+
+        最初用「菱形个数 = 孔位等级」表示，但用户审查后指出难以一眼看明白
+        （看图的人无法确定是「4 个 1 级孔」还是「1 个 4 级孔」）。
+        改成 `Lv4 ×1` 这种直接写法——它没有歧义，也和武器详情里其它数值的
+        写法一致。图形留在这里没有信息增量，就删掉。
+        """
+        y = top + 2
+        canvas.text((MARGIN, y), section.title or "孔位", self.f_small, COLORS["muted"])
+        x = MARGIN + 72
+        normal = section.data.get("normal") or []
+        rampage = section.data.get("rampage") or []
+
+        normal_text = _slots_text(normal) or "无"
+        canvas.text((x, y), normal_text, self.f_body, COLORS["text"])
+        x += canvas.textlength(normal_text, self.f_body) + 28
+
+        if any(rampage):
+            canvas.text((x, y), "百龙孔", self.f_small, COLORS["muted"])
+            x += canvas.textlength("百龙孔", self.f_small) + 10
+            canvas.text(
+                (x, y),
+                _slots_text(rampage) or "无",
+                self.f_body,
+                LEDGER["rampage_slot"],
+            )
+        y += FONT_BODY + 10
+        if section.footer:
+            canvas.text((MARGIN, y), section.footer, self.f_small, COLORS["faint"])
+            y += FONT_SMALL + 6
+        return y + 12
+
+    # ---- 脚注 -----------------------------------------------------------
+
+    def _footnote(self, canvas: Canvas, text: str, top: float) -> float:
+        y = top + 8
+        canvas.line([(MARGIN, y), (self.width - MARGIN, y)], LEDGER["hair"], width=1)
+        canvas.text((MARGIN, y + 8), text, self.f_small, COLORS["faint"])
+        return y + 8 + FONT_SMALL + 6
+
+
 def _css_rgb(rgb) -> str:
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
@@ -856,8 +1449,14 @@ h1 {{ color:{_css_rgb(COLORS["title"])}; font-size:{FONT_TITLE}px; margin:0 0 6p
 {"".join(rows)}{footnote}</body></html>"""
 
 
-def get_renderer() -> CardRenderer:
-    return CardRenderer()
+def get_renderer() -> LedgerRenderer:
+    """当前的图片渲染器。
+
+    V1.3.0 起主路径是 `LedgerRenderer`（公会台账排版）。旧的 `CardRenderer`
+    保留在文件里仅供 `render_html` 参考，不再作为出图路径——两套设计并存
+    只会让卡片风格不一致。
+    """
+    return LedgerRenderer()
 
 
 def render_card(card: Card):

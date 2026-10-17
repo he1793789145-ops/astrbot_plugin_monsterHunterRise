@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 BASE = "https://mhrise.kiranico.com"
@@ -283,9 +283,7 @@ def main(argv=None) -> int:
             json.dumps(
                 {
                     "source": LIST_URL,
-                    "fetched_at": datetime.now(timezone.utc).isoformat(
-                        timespec="seconds"
-                    ),
+                    "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
                     "gathering": gathered,
                     "failures": failures,
                 },
@@ -307,7 +305,7 @@ def main(argv=None) -> int:
             item["gathering"] = points
             matched += 1
     snapshot["meta"].setdefault("notes", []).append(
-        f"采集点数据来自 {LIST_URL}（抓取于 {datetime.now(timezone.utc).date()}），"
+        f"采集点数据来自 {LIST_URL}（抓取于 {datetime.now(UTC).date()}），"
         "该站点未声明许可证，仅提取事实性字段"
     )
     args.out.write_text(

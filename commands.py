@@ -54,18 +54,29 @@ class Command:
 
 
 def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
-    """素材卡：每只怪物一个分区 + 可刷任务。"""
-    # 稀有度改用卡片上的菱形刻度显示，副标题不再重复；类型名由右上角标签承载
-    subtitle_parts = []
+    """素材卡：可做武器/装饰品摘要 + 来源怪物 + 傀异调查 + 采集点 + 可刷任务。"""
+    # 稀有度改用卡片上的菱形刻度显示，副标题不再重复；类型名由右上角标签承载。
+    # 副标题改成指标条（A25 改动二）。
+    metrics: list[tuple[str, str]] = []
     if material.monster_count:
-        subtitle_parts.append(f"来源怪物 {material.monster_count} 只")
+        metrics.append(("来源怪物", f"{material.monster_count} 只"))
     else:
         # 没有怪物掉落来源：多半是野外采集，明确写出来，避免读成「数据缺失」
-        subtitle_parts.append("非怪物掉落")
+        metrics.append(("来源", "非怪物掉落"))
     if material.is_rare:
-        subtitle_parts.append("稀有素材")
-    subtitle = " · ".join(subtitle_parts)
+        metrics.append(("稀有度", "稀有素材"))
     type_label = _type_label(material.item_type) if material.item_type else ""
+
+    # 「这份素材能做什么」——A1/A13：摘要放素材卡，完整列表用 /mh 武器、/mh 技能
+    specific_weapons, _category_weapons = snapshot.weapons_for_material(
+        material.item_id
+    )
+    decorations = snapshot.decorations_for_material(material.item_id)
+    if specific_weapons or decorations:
+        if specific_weapons:
+            metrics.append(("可做武器", f"{len(specific_weapons)} 件"))
+        if decorations:
+            metrics.append(("可做装饰珠", f"{len(decorations)} 个"))
 
     sections: list[Section] = []
     groups = material.grouped_by_monster(MAX_MONSTERS)
@@ -286,9 +297,53 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
             )
         )
 
+    # 「可做武器 / 可做装饰珠」摘要块（A1/A13）：只给名字与系统标签，
+    # 完整列表交给 /mh 武器 与 /mh 技能 —— 素材卡放不下几十件武器。
+    if specific_weapons:
+        rows = []
+        for weapon in specific_weapons[:MAX_WEAPON_LIST]:
+            rows.append(
+                Line.of(
+                    (_systems_text(weapon), "tag"),
+                    (weapon.get("name") or "", "body"),
+                    (f"R{weapon.get('rarity') or '?'}", "value"),
+                )
+            )
+        hidden = len(specific_weapons) - len(rows)
+        sections.append(
+            Section(
+                title="可做武器",
+                lines=rows,
+                glyph="weapon",
+                count=f"共 {len(specific_weapons)} 件",
+                footer=(
+                    f"另有 {hidden} 件；完整列表用 /mh 武器 {material.name}"
+                    if hidden
+                    else f"完整列表用 /mh 武器 {material.name}"
+                ),
+            )
+        )
+    if decorations:
+        sections.append(
+            Section(
+                title="可做装饰珠",
+                lines=[
+                    Line.of(
+                        (f"{item.get('slot')}孔", "tag"),
+                        (item.get("name") or "", "body"),
+                        (item.get("skill") or "", "value"),
+                    )
+                    for item in decorations[:MAX_DECO_LIST]
+                ],
+                glyph="skill",
+                count=f"共 {len(decorations)} 个",
+                footer=f"完整列表用 /mh 技能 {material.name}",
+            )
+        )
+
     return Card(
         title=material.name,
-        subtitle=subtitle,
+        metrics=metrics,
         sections=sections,
         footnote=_footnote(snapshot),
         rarity=material.rarity or None,
@@ -297,13 +352,15 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
 
 
 def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
-    """怪物卡：按难度分组展示掉落表。小动物额外标注出现地图。"""
-    subtitle_parts = [f"{len(monster.drops)} 条掉落记录"]
+    """怪物卡：弱点 + 出现地图 + 按素材分块的掉落表。"""
+    # 副标题改成指标条（A25 改动二）：中缀点串是最像生成式模板的一处写法，
+    # 竖线分隔的指标条更省高度、也更容易扫读。
+    metrics: list[tuple[str, str]] = []
     if monster.is_small:
-        subtitle_parts.insert(0, "小动物")
+        metrics.append(("类别", "小动物"))
+    metrics.append(("掉落记录", f"{len(monster.drops)} 条"))
     if monster.alias:
-        subtitle_parts.append(monster.alias)
-    subtitle = " · ".join(subtitle_parts)
+        metrics.append(("别名", monster.alias))
 
     sections: list[Section] = []
 
@@ -315,14 +372,20 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
                 lines.append(
                     Line.of(("、".join(monster.map_names[index : index + 4]), "body"))
                 )
-            sections.append(Section(title="出现地图", lines=lines))
+            sections.append(Section(title="出现地图", lines=lines, glyph="map"))
         else:
             sections.append(
                 Section(
                     title="出现地图",
                     lines=[Line.of(("源数据里没有记录栖息地图。", "muted"))],
+                    glyph="map",
                 )
             )
+
+    # 弱点方块（A6：位置在出现地图之后、素材方块之前；A7：只做汇总一行）
+    weakness_section = build_weakness_section(snapshot, monster)
+    if weakness_section is not None:
+        sections.append(weakness_section)
 
     # 一个素材一个方块，方块内是该素材的各种获取方式与概率。
     # 这样读起来是「这份素材怎么拿」，而不是在按难度铺开的长表里来回找同名素材。
@@ -380,7 +443,7 @@ def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
 
     return Card(
         title=monster.name,
-        subtitle=subtitle,
+        metrics=metrics,
         sections=sections,
         footnote=_footnote(snapshot),
         badge="小动物" if monster.is_small else "怪物",
@@ -544,6 +607,536 @@ def handle_help(snapshot: Snapshot, argument: str) -> CommandResult:
 
 
 # --------------------------------------------------------------------------
+# V1.3.0 新增：武器 / 技能 / 弱点
+# --------------------------------------------------------------------------
+
+# 武器类型的中文名 -> 武器表键。用户可以在指令里追加类型来收窄结果
+# （A14：「/mh 武器 <素材名> <武器类别>」显示该类型全部）。
+WEAPON_TYPE_LABELS = {
+    "大剑": "great_sword",
+    "太刀": "long_sword",
+    "片手剑": "short_sword",
+    "单手剑": "short_sword",
+    "双剑": "dual_blades",
+    "双刀": "dual_blades",
+    "大锤": "hammer",
+    "锤": "hammer",
+    "狩猎笛": "horn",
+    "笛": "horn",
+    "长枪": "lance",
+    "铳枪": "gun_lance",
+    "斩击斧": "slash_axe",
+    "斩斧": "slash_axe",
+    "盾斧": "charge_axe",
+    "充能斧": "charge_axe",
+    "操虫棍": "insect_glaive",
+    "虫棍": "insect_glaive",
+    "弓": "bow",
+    "轻弩": "light_bowgun",
+    "重弩": "heavy_bowgun",
+}
+
+# 配方系统 -> 行内标签
+SYSTEM_LABELS = {
+    "product": "生产",
+    "process": "强化",
+    "change": "百龙强化",
+    "qurious": "怪异炼化",
+}
+
+# 武器类型专属信息（A22 追加：盾斧的瓶、斩斧的瓶、铳枪的炮击都要显示）
+SPECIAL_LABELS = {
+    "bottle": "瓶",
+    "fire": "炮击",
+    "fire_lv": "炮击等级",
+    "insect_lv": "猎虫等级",
+    "charge_lv": "蓄力等级",
+}
+
+ELEMENT_LABELS = {
+    "Fire": "火",
+    "Water": "水",
+    "Thunder": "雷",
+    "Ice": "冰",
+    "Dragon": "龙",
+    "Poison": "毒",
+    "Sleep": "睡眠",
+    "Paralyze": "麻痹",
+    "Bomb": "爆破",
+    "None": "—",
+    # 肉质表用的是小写键，且雷写作 elect
+    "fire": "火",
+    "water": "水",
+    "ice": "冰",
+    "elect": "雷",
+    "dragon": "龙",
+}
+
+MOTION_LABELS = {"slash": "斩", "strike": "打", "shell": "射"}
+
+# 没有武器类型的「武器名 -> 详情」上限
+MAX_WEAPON_LIST = 4  # 不带类型时按稀有度降序只列 4 件（A14）
+MAX_WEAPONS_PER_TYPE = 0  # 0 = 不截断（A14/A24：带类型时显示该类型全部）
+MAX_DECO_LIST = 8  # 装饰品列表上限（A24）
+
+
+def _weapon_type_zh(snapshot: Snapshot, weapon: dict) -> str:
+    return (weapon.get("type_zh") or "").strip() or weapon.get("type") or "武器"
+
+
+def _slot_text(slots: list) -> str:
+    """`slot_num_list` 的读法：下标 = 等级-1，值 = 该等级孔的个数。"""
+    parts = []
+    for level, count in enumerate(slots or [], start=1):
+        if count:
+            parts.append(f"Lv{level}×{count}")
+    return " + ".join(parts)
+
+
+def _systems_text(weapon: dict) -> str:
+    systems = weapon.get("systems") or []
+    if not systems:
+        return ""
+    labels = [SYSTEM_LABELS.get(system, system) for system in systems]
+    return "[" + "/".join(labels) + "]"
+
+
+def build_weakness_section(snapshot: Snapshot, monster: MonsterInfo) -> Section | None:
+    """弱点方块：汇总一行（A6 放在出现地图之后、素材方块之前；A7 只做汇总）。"""
+    weakness = monster.weakness or {}
+    elements = weakness.get("elements") or {}
+    motion = weakness.get("motion") or {}
+    if not elements and not motion:
+        return None
+
+    element_line = " · ".join(
+        f"{ELEMENT_LABELS.get(key, key)} {elements.get(key, 0)}"
+        for key in ("fire", "water", "ice", "elect", "dragon")
+        if key in elements
+    )
+    motion_line = " · ".join(
+        f"{MOTION_LABELS.get(key, key)} {motion.get(key, 0)}"
+        for key in ("slash", "strike", "shell")
+        if key in motion
+    )
+    immune = "、".join(
+        ELEMENT_LABELS.get(key, key) for key in (weakness.get("immune") or [])
+    )
+
+    lines = [
+        Line.of(("属性", "tag"), (element_line, "body")),
+        Line.of(("肉质", "tag"), (motion_line, "body")),
+    ]
+    if immune:
+        # 免疫单独一行：它是「完全打不动」的信息，比数值更该被看见
+        lines.append(Line.of(("免疫", "tag"), (immune, "body")))
+
+    return Section(
+        title="弱点",
+        lines=lines,
+        glyph="note",
+        count="通常状态",
+        footer="各项取全部位最高肉质；源数据的部位状态无对应字段，故只取通常状态",
+    )
+
+
+def build_weapon_list_card(
+    snapshot: Snapshot,
+    material_name: str,
+    material: MaterialInfo | None,
+    specific: list[dict],
+    category: list[dict],
+    weapon_type: str | None = None,
+) -> Card:
+    """「素材 -> 可做武器」（A12/A14）。"""
+    type_zh = ""
+    if weapon_type:
+        for label, key in WEAPON_TYPE_LABELS.items():
+            if key == weapon_type:
+                type_zh = label
+                break
+
+    metrics = [("可做武器", f"{len(specific)} 件")]
+    if category:
+        # 类别命中只给汇总数字（A20）——它动辄几百件，逐条列会把重点淹掉
+        metrics.append(("可拿它顶", f"{len(category)} 件"))
+    if type_zh:
+        metrics.append(("限定", type_zh))
+
+    sections: list[Section] = []
+    if specific:
+        head = specific[: MAX_WEAPONS_PER_TYPE or len(specific)]
+        if not weapon_type:
+            head = specific[:MAX_WEAPON_LIST]
+        rows = []
+        for weapon in head:
+            rows.append(
+                Line.of(
+                    (_systems_text(weapon), "tag"),
+                    (weapon.get("name") or "", "body"),
+                    (f"R{weapon.get('rarity') or '?'}", "value"),
+                )
+            )
+        rest = len(specific) - len(rows)
+        footer = f"另有 {rest} 件" if rest else ""
+        if not weapon_type and len(specific) > MAX_WEAPON_LIST:
+            footer = (
+                f"另有 {rest} 件；加武器类型看全部，例如 /mh 武器 {material_name} 太刀"
+            )
+        sections.append(
+            Section(
+                title="可做武器" + (f" · {type_zh}" if type_zh else ""),
+                lines=rows,
+                glyph="weapon",
+                count="按稀有度" if not weapon_type else "全部",
+                footer=footer,
+                # 带类型时语义是「该类型全部」，件数可能几十，走两列压高度
+                kind="grid" if weapon_type else "rows",
+            )
+        )
+
+    if category:
+        sections.append(
+            Section(
+                title="类别需求",
+                lines=[
+                    Line.of(
+                        ("这些武器要求的是类别，不是点名要它", "muted"),
+                    )
+                ],
+                glyph="note",
+                footer=f"共 {len(category)} 件武器的类别槽可以拿它顶，此处不逐条列出",
+            )
+        )
+
+    if not sections:
+        sections.append(
+            Section(
+                title="可做武器",
+                lines=[Line.of(("没有武器会用到它", "muted"))],
+                glyph="weapon",
+            )
+        )
+
+    return Card(
+        title=material_name,
+        sections=sections,
+        rarity=material.rarity if material else None,
+        badge="素材",
+        metrics=metrics,
+        footnote=_footnote(snapshot),
+    )
+
+
+def build_weapon_detail_card(snapshot: Snapshot, weapon_key: str) -> Card | None:
+    """武器详情卡（A14 + A22）：攻击/会心/属性/防御 + 锋利度 + 孔位（含百龙孔）+ 固有属性 + 派生 + 素材。"""
+    weapon = snapshot.weapon(weapon_key)
+    if not weapon:
+        return None
+
+    element = weapon.get("element") or {}
+    element_text = "—"
+    if element.get("type") and element.get("type") != "None":
+        element_text = f"{ELEMENT_LABELS.get(element['type'], element['type'])} {element.get('val') or 0}"
+
+    metrics = [
+        ("攻击", str(weapon.get("atk") if weapon.get("atk") is not None else "—")),
+        ("会心", f"{weapon.get('crit') or 0}%"),
+        ("属性", element_text),
+    ]
+    if weapon.get("def"):
+        metrics.append(("防御", f"+{weapon['def']}"))
+
+    sections: list[Section] = []
+
+    # 锋利度：弓与弩没有这个字段（源数据里就是缺键），整块不画
+    sharpness = weapon.get("sharpness")
+    if sharpness:
+        footer = ""
+        if weapon.get("takumi"):
+            footer = f"匠：共 +{weapon['takumi']}"
+        sections.append(
+            Section(
+                title="锋利度",
+                kind="sharpness",
+                data={"values": sharpness},
+                footer=footer,
+            )
+        )
+
+    slots = weapon.get("slots") or []
+    if any(slots) or any(weapon.get("hyakuryu_slots") or []):
+        sections.append(
+            Section(
+                title="孔位",
+                kind="slots",
+                data={"normal": slots, "rampage": weapon.get("hyakuryu_slots") or []},
+                footer="Lv 为孔位等级，×N 为该等级的孔数",
+            )
+        )
+
+    special = weapon.get("special") or {}
+    if special:
+        rows = []
+        for key, value in special.items():
+            label = SPECIAL_LABELS.get(key, key)
+            if isinstance(value, list):
+                value = " ".join(str(item) for item in value)
+            rows.append(Line.of((label, "tag"), (str(value), "body")))
+        sections.append(
+            Section(
+                title="固有属性",
+                lines=rows,
+                glyph="weapon",
+                footer="武器类型决定的信息（盾斧/斩击斧的瓶、铳枪的炮击等）",
+            )
+        )
+
+    parent_key = weapon.get("parent")
+    if parent_key:
+        parent = snapshot.weapon(parent_key)
+        parent_name = (parent or {}).get("name") or parent_key
+        sections.append(
+            Section(
+                title="派生",
+                lines=[Line.of((f"由 {parent_name} 强化而来", "muted"))],
+                glyph="weapon",
+            )
+        )
+
+    recipe_rows: list[Line] = []
+    recipe_footer = ""
+    for system, recipe in snapshot.recipes_of(weapon_key).items():
+        label = SYSTEM_LABELS.get(system, system)
+        for item_id, count in (recipe.get("materials") or [])[:4]:
+            recipe_rows.append(
+                Line.of(
+                    (f"[{label}]", "tag"),
+                    (_item_name(snapshot, {"item_id": str(item_id)}), "body"),
+                    (f"×{count}", "value"),
+                )
+            )
+        category = recipe.get("category")
+        if isinstance(category, list) and len(category) >= 3:
+            recipe_rows.append(
+                Line.of(
+                    (f"[{label}]", "tag"),
+                    (f"（类别）{category[2]}", "muted"),
+                    (f"×{category[1]}", "value"),
+                )
+            )
+    if recipe_rows:
+        sections.append(
+            Section(
+                title="所需素材",
+                lines=recipe_rows[:10],
+                glyph="note",
+                footer=recipe_footer or "同一系统内多条配方按行列出",
+            )
+        )
+
+    return Card(
+        title=weapon.get("name") or weapon_key,
+        sections=sections,
+        rarity=weapon.get("rarity"),
+        badge=_weapon_type_zh(snapshot, weapon),
+        metrics=metrics,
+        footnote=_footnote(snapshot),
+    )
+
+
+def build_skill_card(snapshot: Snapshot, skill: str, decorations: list[dict]) -> Card:
+    """技能卡：提供该技能的装饰珠（按孔位排序）。"""
+    metrics = [("可用装饰珠", f"{len(decorations)} 个")]
+    if decorations:
+        metrics.append(
+            (
+                "孔位范围",
+                f"Lv{decorations[0].get('slot')}–Lv{decorations[-1].get('slot')}",
+            )
+        )
+    sections = [
+        Section(
+            title="提供该技能的装饰珠",
+            lines=[
+                Line.of(
+                    (f"{item.get('slot')}孔", "tag"),
+                    (item.get("name") or "", "body"),
+                    (f"技能 Lv{item.get('skill_lv')}", "value"),
+                )
+                for item in decorations[:MAX_DECO_LIST]
+            ],
+            glyph="skill",
+            count="按孔位",
+            footer="孔位等级即珠子能镶嵌的最小孔；技能等级是单颗珠提供的等级",
+        )
+    ]
+    return Card(
+        title=skill,
+        sections=sections,
+        badge="技能",
+        metrics=metrics,
+        footnote=_footnote(snapshot),
+    )
+
+
+def build_material_deco_card(
+    snapshot: Snapshot,
+    material_name: str,
+    material: MaterialInfo | None,
+    decorations: list[dict],
+) -> Card:
+    """「素材 -> 可做装饰珠」。"""
+    return Card(
+        title=material_name,
+        sections=[
+            Section(
+                title="可做装饰珠",
+                lines=[
+                    Line.of(
+                        (f"{item.get('slot')}孔", "tag"),
+                        (item.get("name") or "", "body"),
+                        (f"{item.get('skill')}", "value"),
+                    )
+                    for item in decorations[:MAX_DECO_LIST]
+                ],
+                glyph="skill",
+                count=f"共 {len(decorations)} 个",
+                footer=(
+                    f"另有 {len(decorations) - MAX_DECO_LIST} 个"
+                    if len(decorations) > MAX_DECO_LIST
+                    else ""
+                ),
+            )
+        ],
+        rarity=material.rarity if material else None,
+        badge="素材",
+        metrics=[("可做装饰珠", f"{len(decorations)} 个")],
+        footnote=_footnote(snapshot),
+    )
+
+
+def handle_weapon(snapshot: Snapshot, argument: str) -> CommandResult:
+    """`/mh 武器 <素材名或武器名> [武器类型]` —— 同命令双向自动识别（A12）。"""
+    if not argument:
+        return CommandResult(
+            text=(
+                "用法：/mh 武器 <素材名或武器名> [武器类型]\n"
+                "例如：/mh 武器 怪异化的皮\n"
+                "      /mh 武器 怪异化的皮 太刀\n"
+                "      /mh 武器 炎火杰大剑"
+            )
+        )
+
+    tokens = argument.split()
+    weapon_type = None
+    if len(tokens) >= 2 and tokens[-1] in WEAPON_TYPE_LABELS:
+        weapon_type = WEAPON_TYPE_LABELS[tokens[-1]]
+        tokens = tokens[:-1]
+    query = " ".join(tokens).strip()
+
+    # 先按素材（A12：素材优先，两者重名极少）
+    if query:
+        material_matches = snapshot.search_materials(query, limit=6)
+        usable = [m for m in material_matches if not m.ambiguous]
+        if usable:
+            target = usable[0]
+            material = snapshot.material(target.key)
+            specific, category = snapshot.weapons_for_material(target.key, weapon_type)
+            note = f"（{target.note}）" if target.note else ""
+            card = build_weapon_list_card(
+                snapshot, target.name, material, specific, category, weapon_type
+            )
+            if note:
+                card.subtitle = note
+            return CommandResult(card=card)
+        if material_matches:
+            lines = [f"「{query}」同时接近几个素材，请回复更具体的名字："]
+            lines.extend(f"· {m.name}" for m in material_matches)
+            return CommandResult(text="\n".join(lines))
+
+    # 再按武器名 -> 武器详情
+    weapon_matches = snapshot.search_weapons(query, limit=12)
+    if not weapon_matches:
+        return CommandResult(
+            text=f"没有找到名为「{query}」的素材或武器。可以只输入名字的一部分再试试。"
+        )
+    exact = [m for m in weapon_matches if m.score == 0]
+    if len(exact) == 1 or len(weapon_matches) == 1:
+        target = exact[0] if exact else weapon_matches[0]
+        card = build_weapon_detail_card(snapshot, target.key)
+        if card:
+            if target.note:
+                card.subtitle = target.note
+            return CommandResult(card=card)
+
+    lines = [f"「{query}」匹配到 {len(weapon_matches)} 把武器，请回复更具体的名字："]
+    for match in weapon_matches:
+        note = f"  {match.note}" if match.note else ""
+        lines.append(f"· {match.name}{note}")
+    lines.append("")
+    lines.append("例如：/mh 武器 " + weapon_matches[0].name)
+    return CommandResult(text="\n".join(lines))
+
+
+def handle_skill(snapshot: Snapshot, argument: str) -> CommandResult:
+    """`/mh 技能 <技能名或素材名>` —— 双向（A23 改版：取代原定的 /mh 装饰品）。"""
+    if not argument:
+        return CommandResult(
+            text=(
+                "用法：/mh 技能 <技能名或素材名>\n"
+                "例如：/mh 技能 攻击\n"
+                "      /mh 技能 修罗原珠"
+            )
+        )
+
+    query = argument.strip()
+
+    # 先按技能名（精确 -> 前缀 -> 包含 -> 模糊）
+    skill_matches = snapshot.search_skills(query, limit=6)
+    usable = [m for m in skill_matches if not m.ambiguous]
+    if usable:
+        target = usable[0]
+        decorations = snapshot.decorations_for_skill(target.name)
+        if decorations:
+            card = build_skill_card(snapshot, target.name, decorations)
+            if target.note:
+                card.subtitle = target.note
+            return CommandResult(card=card)
+
+    # 再按素材名 -> 该素材能做的装饰珠
+    material_matches = snapshot.search_materials(query, limit=6)
+    usable_material = [m for m in material_matches if not m.ambiguous]
+    if usable_material:
+        target = usable_material[0]
+        decorations = snapshot.decorations_for_material(target.key)
+        material = snapshot.material(target.key)
+        if decorations:
+            card = build_material_deco_card(
+                snapshot, target.name, material, decorations
+            )
+            if target.note:
+                card.subtitle = target.note
+            return CommandResult(card=card)
+        return CommandResult(
+            text=f"没有装饰珠需要「{target.name}」。可以用 /mh 素材 {target.name} 看它的其他用途。"
+        )
+
+    if skill_matches:
+        lines = [f"「{query}」同时接近几个技能，请回复更具体的名字："]
+        lines.extend(f"· {m.name}" for m in skill_matches)
+        return CommandResult(text="\n".join(lines))
+    if material_matches:
+        lines = [f"「{query}」同时接近几个素材，请回复更具体的名字："]
+        lines.extend(f"· {m.name}" for m in material_matches)
+        return CommandResult(text="\n".join(lines))
+
+    return CommandResult(
+        text=f"没有找到名为「{query}」的技能或素材。可以只输入名字的一部分再试试。"
+    )
+
+
+# --------------------------------------------------------------------------
 # 命令表
 # --------------------------------------------------------------------------
 
@@ -568,6 +1161,24 @@ COMMANDS: list[Command] = [
         summary="查询某任务的星级、地图、出场怪物与结算奖励",
         handler=handle_quest,
         examples=("/mh 任务 撕裂寂静者",),
+    ),
+    Command(
+        name="武器",
+        usage="/mh 武器 <素材名或武器名> [武器类型]",
+        summary="素材能做的武器 / 某把武器的详情（攻击、锋利度、孔位、派生、素材）",
+        handler=handle_weapon,
+        examples=(
+            "/mh 武器 怪异化的皮",
+            "/mh 武器 怪异化的皮 太刀",
+            "/mh 武器 炎火杰大剑",
+        ),
+    ),
+    Command(
+        name="技能",
+        usage="/mh 技能 <技能名或素材名>",
+        summary="某个技能有哪些装饰珠 / 某素材能做哪些装饰珠",
+        handler=handle_skill,
+        examples=("/mh 技能 攻击", "/mh 技能 修罗原珠"),
     ),
     Command(
         name="help",

@@ -29,6 +29,9 @@ INCLUDE_FILES = (
     "requirements.txt",
     "README.md",
     "tools/extract.py",
+    # `extract.py` 会 import 它（武器 / 装饰珠 / 反查索引），
+    # 漏掉的话用户跑 rebuild_snapshot.py 会直接 ImportError。
+    "tools/extract_equipment.py",
     "tools/fetch_gathering.py",
     "tools/fetch_habitats.py",
     "tools/rebuild_snapshot.py",
@@ -81,12 +84,29 @@ def build(out_path: Path) -> int:
     return 0
 
 
+def plugin_version() -> str:
+    """从 `metadata.yaml` 读版本号。
+
+    早先这里把 1.0.0 写死在输出文件名里，于是 1.2.x 与 1.3.0 的包全叫
+    `-1.0.0.zip`，用户根本分不清手上的是哪一版。`metadata.yaml` 才是版本号的
+    唯一真源，打出来的包名必须跟着它走。
+    """
+    path = PLUGIN_ROOT / "metadata.yaml"
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("version:"):
+                return line.split(":", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return "0.0.0"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="打包 mh_material 插件")
     parser.add_argument(
         "--out",
         type=Path,
-        default=PLUGIN_ROOT.parent / f"{PLUGIN_NAME}-1.0.0.zip",
+        default=PLUGIN_ROOT.parent / f"{PLUGIN_NAME}-{plugin_version()}.zip",
         help="输出 zip 路径",
     )
     args = parser.parse_args(argv)
