@@ -286,6 +286,9 @@ class MonsterInfo:
     # 弱点汇总（V1.3.0）：{"elements","motion","part","immune"}。
     # 只取肉质表的通常状态——源数据里没有字段说明各变体对应哪个状态。
     weakness: dict | None = None
+    # 分部位肉质明细（V1.4.0）：[{"n": 部位名, "v": [[斩打弹+火水雷冰龙+晕], ...]}, ...]
+    # 每个部位的 `v` 是状态变体列表，下标 0 = 通常状态。
+    meat: list[dict] = field(default_factory=list)
 
     @property
     def is_small(self) -> bool:
@@ -365,6 +368,8 @@ class Snapshot:
         self.qurious_tables: dict[str, dict] = tables.get("qurious_tables") or {}
         self.decorations: dict[str, dict] = tables.get("decorations") or {}
         self.deco_index: dict = tables.get("deco_index") or {}
+        # 技能效果：{技能名: {"explain": 总述, "levels": [Lv1, Lv2, ...]}}
+        self.skills: dict[str, dict] = tables.get("skills") or {}
 
         # 繁→简映射供模块级 _normalize() 使用（它就是为查询服务的）
         global _TRAD_SIMP
@@ -376,6 +381,7 @@ class Snapshot:
         self._quest_by_name: dict[str, list[int]] = {}
         self._weapon_by_name: dict[str, list[str]] = {}
         self._skill_to_decos: dict[str, list[str]] = {}
+        self._deco_by_name: dict[str, list[str]] = {}
         # 派生树的两个方向：父 -> 子（快照只存了 parent，子在这里反推），
         # 以及 系列名 -> 该系列的武器（用户会按「伞鸟枪」这样按系列找）
         self._children: dict[str, list[str]] = {}
@@ -483,6 +489,17 @@ class Snapshot:
         self._recipes_by_category = by_category
         for skill, keys in (self.deco_index.get("by_skill") or {}).items():
             self._skill_to_decos[skill] = list(keys)
+        for key, deco in self.decorations.items():
+            name = (deco.get("name") or "").strip()
+            if not name:
+                continue
+            self._deco_by_name.setdefault(name, []).append(key)
+            # 用户不会去打「【2】」这个孔位后缀，所以把去掉后缀的名字也入索引。
+            # 实测去掉后缀后 278 颗珠仍是 278 个不同名字（0 冲突），
+            # 所以「攻击珠」「冰结珠」都能唯一命中，不用先给用户一串候选。
+            base = _DECO_SLOT_SUFFIX.sub("", name).strip()
+            if base and base != name:
+                self._deco_by_name.setdefault(base, []).append(key)
 
     # ---- 武器 -----------------------------------------------------------
 
@@ -627,6 +644,23 @@ class Snapshot:
         table = {name: {"name": name, "skill": name} for name in self._skill_to_decos}
         return self._search(query, index, table, limit)
 
+    def decoration(self, key: str) -> dict | None:
+        entry = self.decorations.get(str(key))
+        return {**entry, "key": str(key)} if entry else None
+
+    def skill_effect(self, name: str) -> dict:
+        """技能效果：``{"explain": 总述, "levels": [Lv1, Lv2, ...]}``；没有则空 dict。"""
+        return self.skills.get(str(name)) or {}
+
+    def search_decorations(self, query: str, limit: int = 12) -> list[Match]:
+        """按装饰珠名搜索。
+
+        278 颗珠对应 278 个不同名字（去孔位后缀、归一化后都无重名），
+        且与素材名、技能名没有交集，所以「名字 -> 键」是一对一的，
+        这个索引只需加载时现算，不必进快照。
+        """
+        return self._search(query, self._deco_by_name, self.decorations, limit)
+
     def material(self, item_id: str) -> MaterialInfo | None:
         item = self.items.get(str(item_id))
         if not item:
@@ -704,6 +738,7 @@ class Snapshot:
             kind=raw.get("kind") or "large",
             map_names=list(raw.get("map_names") or []),
             weakness=raw.get("weakness"),
+            meat=list(raw.get("meat") or []),
         )
 
     def search_monsters(self, query: str, limit: int = 12) -> list[Match]:
@@ -1033,6 +1068,8 @@ def _chance_value(chance) -> float:
 # 归一化时丢弃的字符：「的」这类虚词、各种中点与空白。
 # 这就是「火龙天鳞」能匹配到「火龙的天鳞」的原因。
 _STRIPPED_CHARS = frozenset("的・·∙• 　\t\u00a0")
+# 装饰珠名字尾部的孔位后缀（「攻击珠【2】」-> 「攻击珠」）
+_DECO_SLOT_SUFFIX = re.compile(r"【\d+】$")
 
 # 繁→简映射。**不手写**：由快照里的 `trad_simp` 提供，
 # 而那张表是提取时从游戏数据自己的繁中/简中并列文本生成的。

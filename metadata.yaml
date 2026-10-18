@@ -1,7 +1,7 @@
 name: astrbot_plugin_monsterHunterRise
 display_name: 怪物猎人素材查询
-desc: 群消息查询《怪物猎人 崛起：曙光》的素材获取方式、怪物弱点与掉落、任务奖励，并支持「素材能做什么武器/装饰珠」与武器详情，以图片卡片呈现。
-version: 1.3.1
+desc: 群消息查询《怪物猎人 崛起：曙光》的素材获取、怪物弱点与分部位肉质、任务奖励，以及武器做法、武器详情与装饰珠配方，以图片卡片呈现。
+version: 1.4.1
 author: UltimateSpiderX
 repo: ""
 astrbot_version: ">=4.0.0"

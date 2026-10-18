@@ -212,6 +212,21 @@ def _num_index(table, prefix: str) -> dict[int, str]:
     return out
 
 
+def _name_index_any(table, prefix: str) -> dict[int, str]:
+    """兼容两种条目命名的读取器：``<prefix>123_Name`` 与 ``<prefix>123``。
+
+    实测 ``material_category_msg_mr`` 的条目名是 ``ICT_Name_200``——**没有**
+    ``_Name`` 后缀，用 `_num_index` 会一条都取不到（装饰珠的类别需求因此全空）。
+    """
+    pattern = re.compile(r"^" + re.escape(prefix) + r"(\d+)(?:_Name)?$")
+    out: dict[int, str] = {}
+    for entry in (table or {}).get("entries") or []:
+        match = pattern.match(entry.get("name") or "")
+        if match:
+            out.setdefault(int(match.group(1)), _msg_zh(entry))
+    return out
+
+
 def _id_of(row, tag):
     """从一行里取出 ``{<Tag>: id}`` 的 id。"""
     return find_key(row, tag)
@@ -516,6 +531,31 @@ def _weapon_element(base_row: dict) -> tuple[dict, dict | None]:
 # --------------------------------------------------------------------------
 
 
+def _deco_category(product: dict | None, cat_names_mr: dict) -> dict | None:
+    """百龙装饰珠的类别需求 -> ``{"name": ..., "point": N}``。
+
+    `material_category` 是 ``{"Mr": n}``，类别名在 `material_category_msg_mr`
+    的 ``200 + n`` 条目上（实测 0→矿石大师等级素材、15→土砂龙、77→岚龙）。
+
+    **`point` 是「评价值」，不是数量。** 这张表是全文件 246 张表里唯一
+    没有 `material_category_num` 的，`point` 取值 5/8/10/15，
+    对应外部图鉴的「还需要提供任意评价值为 N 点的同分类素材」。
+    """
+    if not isinstance(product, dict):
+        return None
+    raw = product.get("material_category")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    number = raw.get("Mr")
+    if not isinstance(number, int):
+        return None
+    name = cat_names_mr.get(MR_DECO_OFFSET + number)
+    if not name or REJECTED in name:
+        return None
+    point = product.get("point")
+    return {"name": name, "point": point if isinstance(point, int) else None}
+
+
 def build_decorations(mhrice: dict):
     """§2 / §2.1：``(decorations, deco_index, skipped)``。"""
     deco_names = _num_index(mhrice.get("decorations_name_msg"), "Decorations_")
@@ -524,6 +564,9 @@ def build_decorations(mhrice: dict):
     skill_names = _num_index(mhrice.get("player_skill_name_msg"), "PlayerSkill_")
     skill_names_mr = _num_index(mhrice.get("player_skill_name_msg_mr"), "PlayerSkill_")
     hy_skill_names = _num_index(mhrice.get("hyakuryu_skill_name_msg"), "HyakuryuSkill_")
+    # 类别名：material_category_msg_mr 的编号是 200+n（与装饰珠同一套偏移）。
+    # 注意这张表的条目名没有 `_Name` 后缀，必须用 _name_index_any。
+    cat_names_mr = _name_index_any(mhrice.get("material_category_msg_mr"), "ICT_Name_")
 
     def skill_zh(skill_ref):
         """``{"Skill": n}`` / ``{"MrSkill": n}`` 两种标签都要读。"""
@@ -618,6 +661,13 @@ def build_decorations(mhrice: dict):
                 (product or {}).get("item_id_list"),
                 (product or {}).get("item_num_list"),
             ),
+            # 百龙珠除点名素材外，还要求「任意评价值为 N 点的同分类素材」。
+            # 这张表**没有** material_category_num（兄弟表都有），
+            # 但它的 `point` 就是那个 N——外部图鉴的原文是
+            # 「还需要提供任意评价值为 8 点的同分类素材」，与 point 值逐一对应。
+            # 所以不要按「数量」去理解 point
+            # （按武器那边的约定会落成 ×0）。
+            "category": _deco_category(product, cat_names_mr),
         }
 
     # --- 反查 ---

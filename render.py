@@ -824,6 +824,9 @@ LEDGER = {
     "tag_bg": (34, 30, 22),  # 标签底色
     "gold_dim": (110, 90, 48),  # 标签描边
     "rampage_slot": (150, 120, 200),
+    # 物理肉质达到「弱点特效」阈值时的标注色。
+    # 注意别用 COLORS["chance"]——那是绿色（量条用的），与「橙色」不符。
+    "weak": (231, 146, 62),
     # 锋利度 7 色。顺序 0..6 = 赤 橙 黄 緑 青 白 紫，
     # 由数据内证据确认：双剑有一批调试行直接写着「斬れ味テスト 紫→赤/青/緑/黄/橙」
     # 与「白→緑/黄/橙」，两个独立锚点推出的顺序完全一致。
@@ -947,6 +950,8 @@ class LedgerRenderer:
                 cursor = self._slots(canvas, section, cursor)
             elif section.kind == "grid":
                 cursor = self._grid(canvas, section, cursor)
+            elif section.kind == "table":
+                cursor = self._table(canvas, section, cursor)
             else:
                 cursor = self._block(canvas, section, cursor)
         if card.footnote:
@@ -1277,6 +1282,126 @@ class LedgerRenderer:
                 (text_left, y + 2), section.footer, self.f_small, COLORS["faint"]
             )
             y += FONT_SMALL + 8
+        return y + 12
+
+    def _table(self, canvas: Canvas, section: Section, top: float) -> float:
+        """数值表格：分组标签 + 表头 + 若干行「名称 + 定宽数字列」。
+
+        专为肉质表设计，但结构是通用的。约定：
+
+        * `data["headers"]`：表头文字列表（长度 = 数字列数）
+        * `data["rows"]`：每行是 `[名称, 数值, 数值, ...]`，数值可为 int 或 ""
+        * `data["groups"]`：可选，列分组（如 物理 / 属性），画成分隔线 + 组名
+        * `data["highlight"]`：可选，`{"from": 0, "to": 2, "min": 45}` 表示
+          第 0–2 列达到 45 时用**橙色**标出（对应「弱点特效」的触发阈值）
+        * `data["note"]`：可选，表格下方的补充说明
+
+        纵向顺序是「组名 -> 表头 -> 分隔线 -> 数据行」。组名**不能**与表头同高，
+        否则两段文字会叠在一起（第一版就是这样，组名压在每个列标题上）。
+        """
+        y = self._block_title(canvas, section, top)
+        headers = section.data.get("headers") or []
+        rows = section.data.get("rows") or []
+        groups = section.data.get("groups") or []
+        highlight = section.data.get("highlight") or {}
+        band = self.body_band
+
+        label_left = MARGIN + 6
+        number_width = 42.0
+        grid_left = label_left
+        # 数字列从右缘往左排，保证表格右缘与正文对齐
+        number_left = self.width - MARGIN - 6 - number_width * len(headers)
+
+        # ---- 分组标签（可选）----
+        if any(group.get("name") for group in groups):
+            for group in groups:
+                start, end, name = (
+                    group.get("start"),
+                    group.get("end"),
+                    group.get("name"),
+                )
+                if not name or not isinstance(start, int) or not isinstance(end, int):
+                    continue
+                left = number_left + number_width * start
+                right = number_left + number_width * (end + 1)
+                width = canvas.textlength(name, self.f_tag)
+                canvas.text(
+                    ((left + right - width) / 2, y),
+                    name,
+                    self.f_tag,
+                    COLORS["gold_dim"],
+                )
+            y += FONT_SMALL + 1
+
+        # ---- 表头 ----
+        header_y = y
+        for index, text in enumerate(headers):
+            cell_x = number_left + number_width * index
+            width = canvas.textlength(text, self.f_small)
+            canvas.text(
+                (cell_x + (number_width - width) / 2, header_y),
+                text,
+                self.f_small,
+                COLORS["muted"],
+            )
+        # 列分隔线：贯穿组名行与表头行
+        for group in groups:
+            start = group.get("start")
+            if not isinstance(start, int) or not start:
+                continue
+            left = number_left + number_width * start
+            canvas.line(
+                [(left, header_y - (FONT_SMALL if groups else 0)), (left, header_y)],
+                LEDGER["hair"],
+                width=1,
+            )
+        y = header_y + FONT_SMALL + 5
+        canvas.line(
+            [(grid_left, y), (self.width - MARGIN - 6, y)],
+            COLORS["gold_dim"],
+            width=1,
+        )
+        y += 6
+
+        # ---- 数据行 ----
+        for index, row in enumerate(rows):
+            if index % 2:
+                canvas.rect(
+                    (
+                        MARGIN - 4,
+                        y - ROW_BAND_PAD / 2,
+                        self.width - MARGIN,
+                        y - ROW_BAND_PAD / 2 + band,
+                    ),
+                    fill=LEDGER["row_alt"],
+                )
+            name = str(row[0]) if row else ""
+            canvas.text((grid_left, y), name, self.f_body, COLORS["text"])
+            for column, value in enumerate(row[1:]):
+                if not isinstance(value, int):
+                    continue
+                cell_x = number_left + number_width * column
+                text = str(value)
+                width = canvas.textlength(text, self.f_body)
+                color = COLORS["text"]
+                if value == 0:
+                    # 0 = 完全无效，压暗但保留（藏起来会让人误以为没这列）
+                    color = COLORS["faint"]
+                elif (
+                    highlight
+                    and highlight.get("from", 0) <= column <= highlight.get("to", -1)
+                    and value >= (highlight.get("min") or 45)
+                ):
+                    color = LEDGER["weak"]
+                canvas.text(
+                    (cell_x + (number_width - width) / 2, y), text, self.f_body, color
+                )
+            y += band + ROW_GAP
+
+        for text in (section.data.get("note"), section.footer):
+            if text:
+                canvas.text((grid_left, y + 2), text, self.f_small, COLORS["faint"])
+                y += FONT_SMALL + 8
         return y + 12
 
     def _gauge(self, canvas: Canvas, x: float, y: float, percent: float, lines) -> None:

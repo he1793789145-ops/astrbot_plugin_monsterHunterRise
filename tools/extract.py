@@ -124,18 +124,27 @@ PART_NAME_ZH = {
     "右翼": "右翼",
     "尻尾": "尾巴",
     "尾": "尾巴",
+    # 前后肢与尾巴尖改用游戏官方简体中文的说法（前肢/后肢/尾巴尖），
+    # 与 parts_type 给出的一级部位名保持一致。
+    "尻尾先端": "尾巴尖",
+    "尻尾先": "尾巴尖",
+    "尻尾根本": "尾根",
+    "尾穂先": "尾尖",
     "左脚": "左脚",
     "右脚": "右脚",
-    "左前脚": "左前脚",
-    "右前脚": "右前脚",
-    "前脚": "前脚",
-    "左後脚": "左后脚",
-    "右後脚": "右后脚",
-    "後脚": "后脚",
+    "左前脚": "左前肢",
+    "右前脚": "右前肢",
+    "前脚": "前肢",
+    "左後脚": "左后肢",
+    "右後脚": "右后肢",
+    "後脚": "后肢",
+    "後ろ脚": "后肢",
+    "後ろ足": "后肢",
     "左腕": "左腕",
     "右腕": "右腕",
     "腕": "腕",
     "脚": "脚",
+    "手足": "手脚",
     "翼脚": "翼脚",
     "翼脚_右": "右翼脚",
     "角": "角",
@@ -149,13 +158,13 @@ PART_NAME_ZH = {
     "翼腕": "翼腕",
     "翼膜と端": "翼膜",
     "後脚ヒレ": "后脚鳍",
-    "尻尾先端": "尾尖",
-    "尻尾先": "尾尖",
     "尻尾根元": "尾根",
     "尻尾切断部分": "尾巴（切断处）",
     "上半身": "上半身",
+    "下半身": "下半身",
     "腹体": "腹部",
     "背体": "背部",
+    "背部": "背部",
     "脚根本": "脚根",
     "胴部": "躯干",
     "触覚": "触角",
@@ -165,9 +174,51 @@ PART_NAME_ZH = {
     "髪": "鬃毛",
     "胸": "胸部",
     "泥団子": "泥团",
+    # ---- 单字与短词：缺了它们会让「腹」「爪」这类常用部位整体翻不出 ----
+    "腹": "腹部",
+    "腹下": "下腹部",
+    "爪": "爪",
+    "体": "躯干",
+    "尻": "尾部",
+    "舌": "舌",
+    "鼻": "鼻",
+    "岩": "岩",
+    "壺": "壶",
+    "傘": "伞",
+    "剛毛": "刚毛",
+    "ヒレ": "鳍",
+    "ブレード": "刃",
+    "トサカ": "冠",
+    "スパイク": "棘",
+    "ガスだまり": "瓦斯积聚",
+    "顔鬼火": "脸（鬼火）",
+    "弱点": "弱点",
+    "希少用先端": "稀有部位尖端",
+    "鉤しっぽ": "钩尾",
+    # 左右并存的部位：显式给全名，避免最长子串只命中半边
+    "左翼脚": "左翼脚",
+    "右翼脚": "右翼脚",
+    "左ハサミ": "左螯",
+    "右ハサミ": "右螯",
+    "左ブレード": "左刃",
+    "右ブレード": "右刃",
+    # 双部位合成名：子串匹配只会给出其中一个，必须显式写全
+    "尻尾&背中": "尾巴+背部",
+    "腹・後脚": "腹部+后肢",
+    "腹部・後脚": "腹部+后肢",
+    "首＋体": "颈部+躯干",
+    "左右前脚": "左右前肢",
+    "両翼": "双翼",
+    "両脚": "双腿",
+    "首部": "颈部",
+    "首下": "颈下",
+    "胸部": "胸部",
+    # ---- 内部标记 ----
     "矢弾き用": "",
     "肉質": "",
     "RabbitConverted": "",
+    "ワナ用アタリ": "",
+    "回転中アタリ": "",
 }
 
 # map_no -> 地图名。Stage_Name_01.._11 实测取自 map_name 表；
@@ -1014,14 +1065,21 @@ def translate_part(name: str) -> str:
 
     先精确匹配，再按「最长已知词」做包含匹配，
     这样 `デブ時頭`（河童蛙的膨胀状态头部）能落到 `头部`。
+
+    注意：**值为空的词条（内部标记，如 `肉質`/`矢弾き用`）不参与包含匹配**。
+    否则 `肉質`（2 字）会在 `A：肉質部位00　頭` 里压过 `頭`（1 字），
+    把真正的部位名变成空名——这正是之前丢部位的一个直接原因。
     """
     if not name:
         return ""
     if name in PART_NAME_ZH:
         return PART_NAME_ZH[name]
     best = ""
+    best_zh = ""
     for japanese, chinese in PART_NAME_ZH.items():
-        if japanese and japanese in name and len(japanese) > len(best):
+        if not japanese or not chinese:
+            continue
+        if japanese in name and len(japanese) > len(best):
             best = japanese
             best_zh = chinese
     return best_zh if best else ""
@@ -1332,25 +1390,130 @@ def build_gathering_nodes(mhrice: dict, map_names: dict) -> dict:
     return result
 
 
-def meat_part_zh(raw_name: str) -> str:
-    """肉质表的部位名（日文）-> 中文；翻不出或属内部标记时返回空字符串。
+# 肉质表部位名的**内部前缀**，必须在 split("_") 之前剥掉。
+# 顺序错会让真实部位整片消失（实测丢过 13 个：水兽 7 + 赤甲兽 7 + 冰牙龙的头/翼）。
+_MEAT_PREFIX_PATTERNS = (
+    re.compile(r"^[A-Z]：[A-Z]："),  # 双前缀 "I：J：腕鬼火"
+    re.compile(r"^[A-Z]："),  # "A：" 编号前缀
+    re.compile(r"^RabbitConverted_Group\d+_\d+-"),  # 赤甲兽的内部调试名
+    re.compile(r"^RabbitConverted\s*-\s*"),
+    re.compile(r"^肉質部位\d+[\s　]+"),  # 冰牙龙
+    re.compile(r"^肉質_"),  # 水兽
+)
 
-    meat_map 的值形如 `A：頭部_肉質`、`背中（帯電部位）`、`爪（破壊後）`、
-    `腹部（繭化状態中）1`、`矢弾き用`、`RabbitConverted - 頭部`，
-    所以要先去前缀/下标/状态注解，再翻译。**绝不把日文原样显示给用户。**
+
+def meat_part_zh(raw_name: str) -> str:
+    """肉质表的部位名（日文）-> 中文；翻不出时返回空字符串（绝不显示日文）。
+
+    ## 清洗顺序是有讲究的
+
+    meat_map 的值形如 `A：頭部_肉質`、`A：肉質部位00　頭`、`B：肉質_腹`、
+    `A：RabbitConverted_Group1_2-頭`、`背中（帯電部位）`、`腹部（繭化状態中）1`。
+
+    **必须先剥内部前缀，再 `split("_")`**，否则：
+
+    * `A：肉質_頭` 先 split 就只剩 `肉質`，真部位「頭」被切掉 → 水兽 7 个部位全灭；
+    * `A：RabbitConverted_Group1_2-頭` 同样被 split 砍断 → 赤甲兽 7 个部位全灭；
+    * `A：肉質部位00　頭` 不剥前缀时，`肉質`（2 字）会压过 `頭`（1 字）→ 冰牙龙的头/翼变空名。
     """
     text = str(raw_name or "").strip()
     if not text:
         return ""
-    text = re.sub(r"^[A-Z]：", "", text)  # "A：" 编号前缀
-    text = text.split("_")[0]  # "_肉質" 这类后缀
-    text = re.sub(r"^RabbitConverted\s*-\s*", "", text)  # 内部调试名
+    for pattern in _MEAT_PREFIX_PATTERNS:
+        text = pattern.sub("", text)
+    text = text.split("_")[0]  # 残留的 "_肉質" 这类后缀
     text = re.sub(r"[（(][^）)]*[）)]", "", text)  # 状态注解
     text = re.sub(r"\d+$", "", text).strip()  # 尾部编号
     if not text:
         return ""
-    translated = translate_part(text)
-    return translated or ""
+    return translate_part(text)
+
+
+def _meat_part_label(meat_map: dict, index: int) -> str:
+    """某个肉质槽的部位名：**遍历别名，取第一个能翻成中文的**。
+
+    不能只看 `names[0]`——实测 5 个槽的首个别名是 `矢弾き用`（内部标记），
+    真正的部位名在第二个别名里（`["A：矢弾き用", "A：頭"]`）。
+    全部别名都翻不出时返回空，由调用方补「隐藏部位N」。
+    """
+    names = meat_map.get(str(index)) or []
+    if isinstance(names, str):
+        names = [names]
+    for raw in names:
+        translated = meat_part_zh(str(raw))
+        if translated:
+            return translated
+    return ""
+
+
+def build_meat_table(mhrice: dict) -> dict:
+    """em -> 分部位肉质明细（含全部状态变体）。
+
+    ## 与 build_weakness 的分工
+
+    `build_weakness` 只产出「汇总一行」（各属性全部位最高值 + 免疫），用于怪物卡；
+    这里产出**完整明细**，用于 `/mh 肉质`。
+
+    ## 字段顺序按游戏内猎人笔记
+
+    斩 打 弹（射击） / 火 水 雷 冰 龙 / 晕。
+
+    注意两个易错点：
+
+    * **雷在冰之前**，与 mhrice 的键序（fire/water/ice/elect/dragon）不同；
+    * 第 9 个键 `piyo` 在本地数据里没有名字，但外部图鉴这一列正是「晕」，
+      且取值分布（头部 100、躯干 0、少数 25/50/120）与气绝肉质一致，故按「晕」输出。
+
+    ## 状态变体
+
+    同一部位有 1–7 个变体，源数据里**没有任何字段**说明对应哪个状态，
+    所以原样保留：下标 0 = 通常状态，卡片默认只展示它。
+
+    全零的槽是 padding（实测 677/1264 个槽全零），直接跳过。
+    无名部位补「隐藏部位N」（外部图鉴对这种槽也是这么标的）。
+    """
+    result: dict = {}
+    for raw in mhrice.get("monsters") or []:
+        em = (raw.get("em_type") or {}).get("Em")
+        if not isinstance(em, int):
+            continue
+        container = ((raw.get("meat_data") or {}).get("meat_container")) or []
+        meat_map = (raw.get("collider_mapping") or {}).get("meat_map") or {}
+        parts: list[dict] = []
+        for index, slot in enumerate(container):
+            groups = (slot or {}).get("meat_group_info") or []
+            variants: list[list[int]] = []
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                variants.append(
+                    [
+                        group.get(key) if isinstance(group.get(key), int) else 0
+                        for key in MEAT_VALUE_KEYS
+                    ]
+                )
+            if not variants:
+                continue
+            if not any(any(cell for cell in row) for row in variants):
+                continue  # 全零 padding
+            label = _meat_part_label(meat_map, index) or f"隐藏部位{index}"
+            parts.append({"n": label, "v": variants})
+        if parts:
+            result[em] = parts
+    return result
+
+
+MEAT_VALUE_KEYS = (
+    "slash",  # 斩
+    "strike",  # 打
+    "shell",  # 弹（射击）
+    "fire",  # 火
+    "water",  # 水
+    "elect",  # 雷（键名是 elect，不是 thunder）
+    "ice",  # 冰
+    "dragon",  # 龙
+    "piyo",  # 晕（气绝肉质，见 build_meat_table）
+)
 
 
 def build_weakness(mhrice: dict) -> dict:
@@ -1402,10 +1565,8 @@ def build_weakness(mhrice: dict) -> dict:
             if not groups:
                 continue
             info = groups[0] if isinstance(groups[0], dict) else {}
-            part_name = ""
-            names = meat_map.get(str(index)) or []
-            if isinstance(names, list) and names:
-                part_name = meat_part_zh(str(names[0]))
+            # 遍历别名取第一个可译的（不能只看 names[0]，见 _meat_part_label）
+            part_name = _meat_part_label(meat_map, index)
             for key in element_keys:
                 value = info.get(key)
                 if isinstance(value, int) and value > elements.get(key, -1):
@@ -1782,6 +1943,15 @@ def build_snapshot(
     weakness = build_weakness(mhrice)
     weakness_count = sum(1 for v in weakness.values() if v)
     print(f"  弱点汇总: {weakness_count} 只（只取通常状态的肉质）")
+    # 分部位肉质明细（含全部状态变体）。与上面的「汇总一行」互补：
+    # 汇总给怪物卡，明细给 /mh 肉质。
+    meat_tables = build_meat_table(mhrice)
+    meat_parts = sum(len(parts) for parts in meat_tables.values())
+    meat_rows = sum(len(part["v"]) for parts in meat_tables.values() for part in parts)
+    print(
+        f"  肉质明细: {len(meat_tables)} 只 / {meat_parts} 个部位 / "
+        f"{meat_rows} 行（含状态变体）"
+    )
     monsters_out = {}
     for em, info in monsters.items():
         drops = monster_drops.get(em)
@@ -1794,6 +1964,9 @@ def build_snapshot(
         weak = weakness.get(int(em))
         if weak:
             entry["weakness"] = weak
+        meat = meat_tables.get(int(em))
+        if meat:
+            entry["meat"] = meat
         monsters_out[em] = entry
     print(f"  快照内怪物: {len(monsters_out)} 只大型")
 
@@ -1826,6 +1999,39 @@ def build_snapshot(
         f"（怪异炼化共享表 {len(equipment['qurious_tables'])} 张）"
     )
     print(f"  装饰品: {len(equipment['decorations'])} 个")
+
+    # 装饰珠配方里引用的物品，可能因其类型不是素材（`Consume` 等）而被上面的
+    # 过滤挡掉。挡掉后配方会显示成 `#9` 这种裸 id —— 实测命中 2 颗珠：
+    # 生命粉尘(9) → 友爱珠【2】、远古秘药(467) → 治愈珠【2】。
+    # 这里在装备数据算好之后把它们补进 items_out（补的是名字，来源仍为空）。
+    patched = []
+    for deco in equipment["decorations"].values():
+        for item_id, _count in deco.get("materials") or []:
+            key = str(item_id)
+            if key in items_out:
+                continue
+            raw = items_json.get(key)
+            if not isinstance(raw, dict):
+                continue
+            items_out[key] = {
+                "name": raw.get("name") or "",
+                "rarity": raw.get("rarity"),
+                "type": raw.get("type") or "",
+                "sources": [],
+                "anomaly_rewards": [],
+                "gathering_nodes": [],
+            }
+            patched.append(f"{key}:{raw.get('name')}")
+    if patched:
+        print(
+            f"  补入装饰珠配方引用的非素材物品: {len(patched)} 个（{'、'.join(patched)}）"
+        )
+
+    # 技能效果（总述 + 逐等级）。很小（含文本约 20 KB），直接进快照，
+    # 这样 /mh 技能 的卡片能直接给出「这个技能到底做什么」。
+    skill_effects = build_skill_effects(mhrice)
+    skill_levels = sum(len(entry["levels"]) for entry in skill_effects.values())
+    print(f"  技能效果: {len(skill_effects)} 个技能 / {skill_levels} 条分级效果")
 
     # 素材的类别（「类别需求」反查需在加载时用到它，如 ["矿石素材"]）
     for item_id, entry in items_out.items():
@@ -1868,12 +2074,126 @@ def build_snapshot(
             "qurious_tables": equipment["qurious_tables"],
             "decorations": equipment["decorations"],
             "deco_index": equipment["deco_index"],
+            "skills": skill_effects,
             "trad_simp": trad_simp,
             "quest_type_labels": QUEST_TYPE_LABELS,
             "rank_labels": RANK_LABELS,
             "source_labels": {key: label for key, label in SOURCE_KINDS},
         },
     }
+
+
+def _msg_text(entry) -> str:
+    """取条目里的**简体中文**文本，并清掉换行与占位符。"""
+    content = entry.get("content") or []
+    text = content[COL_SIMPLIFIED] if len(content) > COL_SIMPLIFIED else ""
+    text = (text or "").replace("\r\n", " ").replace("\n", " ").strip()
+    if "#Rejected#" in text:
+        return ""
+    return text
+
+
+def build_skill_effects(mhrice: dict) -> dict:
+    """技能 -> {总述, 逐等级效果}。
+
+    ## 数据形态
+
+    * `player_skill_explain_msg`      —— 名字形如 `PlayerSkill_000_Explain`，
+      内容是该技能的**总述**（「提高玩家的攻击力。」）。
+    * `player_skill_detail_msg`       —— `PlayerSkill_000_03_Detail`，
+      内容是**某一等级**的效果（「攻击力变为1.05倍， 攻击力+7」）。
+    * 带 `_mr` 的两张表是大师位追加的等级（如 `PlayerSkill_108_04_Detail_MR`）。
+      它们的编号是**基础技能 id**（不带名字表那套 +200 偏移），所以能直接合并。
+    * `hyakuryu_skill_explain_msg`    —— 百龙技能的总述（`HyakuryuSkill_259_Explain`）。
+
+    ## 等级编号是 0 基的
+
+    `PlayerSkill_000_00_Detail` 是游戏内的 **Lv1**（攻击力+3）。
+    所以存进快照时统一加 1，变成「下标 = 等级-1」，与装饰珠的 `skill_lv` 一致。
+
+    返回 `{技能名: {"explain": str, "levels": [str, ...]}}`；
+    `levels[i]` 是 Lv(i+1) 的效果，缺失的等级为 None。
+    """
+    # 技能名（基础表与大师位表共用同一套 id，后者是 200+ 偏移）
+    names: dict[int, str] = {}
+    for table, pattern in (
+        ("player_skill_name_msg", r"PlayerSkill_(\d+)_Name$"),
+        ("player_skill_name_msg_mr", r"PlayerSkill_(\d+)_Name$"),
+    ):
+        for entry in (mhrice.get(table) or {}).get("entries") or []:
+            match = re.match(pattern, entry.get("name") or "")
+            if not match:
+                continue
+            text = _msg_text(entry)
+            if text:
+                names.setdefault(int(match.group(1)), text)
+
+    # 总述
+    explains: dict[int, str] = {}
+    for table, pattern in (
+        ("player_skill_explain_msg", r"PlayerSkill_(\d+)_Explain$"),
+        ("player_skill_explain_msg_mr", r"PlayerSkill_(\d+)_Explain_MR$"),
+    ):
+        for entry in (mhrice.get(table) or {}).get("entries") or []:
+            match = re.match(pattern, entry.get("name") or "")
+            if not match:
+                continue
+            text = _msg_text(entry)
+            if text:
+                explains.setdefault(int(match.group(1)), text)
+
+    # 逐等级（基础表 + 大师位追加表合并）
+    levels: dict[int, dict[int, str]] = {}
+    for table, pattern in (
+        ("player_skill_detail_msg", r"PlayerSkill_(\d+)_(\d+)_Detail$"),
+        ("player_skill_detail_msg_mr", r"PlayerSkill_(\d+)_(\d+)_Detail_MR$"),
+    ):
+        for entry in (mhrice.get(table) or {}).get("entries") or []:
+            match = re.match(pattern, entry.get("name") or "")
+            if not match:
+                continue
+            skill_id = int(match.group(1))
+            level_index = int(match.group(2))  # 0 基，显示时 +1
+            text = _msg_text(entry)
+            if text:
+                levels.setdefault(skill_id, {})[level_index] = text
+
+    result: dict[str, dict] = {}
+    for skill_id, name in names.items():
+        explain = explains.get(skill_id) or ""
+        by_level = levels.get(skill_id) or {}
+        if not explain and not by_level:
+            continue
+        highest = max(by_level) if by_level else -1
+        rows = [by_level.get(index) for index in range(highest + 1)]
+        result[name] = {"explain": explain, "levels": rows}
+
+    # 百龙技能：只有总述（每颗珠固定 Lv1，没有分级）。
+    # 名字与总述都在 base + _mr 两张表里按 id 合并；实测 _mr 覆盖 259..294
+    # （正是那批原本以为「本地没有名字」的技能，267/294 是 #Rejected# 占位）。
+    rampage_names: dict[int, str] = {}
+    for table in ("hyakuryu_skill_name_msg", "hyakuryu_skill_name_msg_mr"):
+        for entry in (mhrice.get(table) or {}).get("entries") or []:
+            match = re.match(r"HyakuryuSkill_(\d+)_Name$", entry.get("name") or "")
+            if not match:
+                continue
+            text = _msg_text(entry)
+            if text:
+                rampage_names.setdefault(int(match.group(1)), text)
+    rampage_explains: dict[int, str] = {}
+    for table in ("hyakuryu_skill_explain_msg", "hyakuryu_skill_explain_msg_mr"):
+        for entry in (mhrice.get(table) or {}).get("entries") or []:
+            match = re.match(r"HyakuryuSkill_(\d+)_Explain$", entry.get("name") or "")
+            if not match:
+                continue
+            text = _msg_text(entry)
+            if text:
+                rampage_explains.setdefault(int(match.group(1)), text)
+    for skill_id, name in rampage_names.items():
+        explain = rampage_explains.get(skill_id) or ""
+        if explain and name not in result:
+            result[name] = {"explain": explain, "levels": []}
+    return result
 
 
 def build_trad_simp(mhrice: dict) -> dict:

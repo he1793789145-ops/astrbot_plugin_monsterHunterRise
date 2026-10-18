@@ -59,6 +59,17 @@ QUERIES = [
     ("武器", "雷神龙盾斧"),
     ("技能", "攻击"),
     ("技能", "修罗原珠"),  # 素材 -> 可做装饰珠
+    # V1.4.0
+    ("肉质", "爵银龙"),
+    ("肉质", "泡狐龙"),  # 5 个状态变体
+    ("肉质", "棘茶龙"),  # 7 个状态变体（展示时截到 4 个）
+    ("肉质", "水兽"),  # 部位名清洗修好后才有 7 个部位
+    ("装饰品", "攻击珠"),  # 不带【2】后缀也要命中
+    ("装饰品", "痛恨龙珠"),  # 百龙珠：类别需求 + 评价值
+    # V1.4.1：技能效果
+    ("技能", "看破"),
+    ("技能", "痛恨一击"),  # 百龙技能：只有总述，无分级
+    ("help", "武器"),
     ("help", ""),
     ("素材", ""),
     ("不存在的子命令", ""),
@@ -78,7 +89,6 @@ REQUIRED_SECTIONS = {
     # （parts_type 按 em_type.Em 取 text_for_monster_list），
     # 所以断言也随之改：爵银龙是「角破坏 / 翼破坏 / 前肢破坏」，
     # 不再是 part_map 那套内部碰撞体名（头部/翼/左前脚）。
-    "爵银龙": ["角破坏", "翼破坏", "前肢破坏", "本体剥取", "尾巴剥取", "弱点"],
     # 怪物卡按素材分块：素材名应作为分区标题出现，而不是只出现在行里
     "丸鸟": ["出现地图", "废神社", "丸鸟蛋", "药草"],
     "温暖的毛皮": ["精灵鹿"],
@@ -94,8 +104,33 @@ REQUIRED_SECTIONS = {
     "伞鸟枪": ["伞鸟衍生", "长枪"],
     "雷神龙盾斧": ["雷神龙衍生", "盾斧"],
     # V1.3.0：技能 -> 装饰珠 / 素材 -> 装饰珠
-    "攻击": ["提供该技能的装饰珠", "攻击珠"],
-    "修罗原珠": ["可做装饰珠"],
+    "攻击": ["提供该技能的装饰珠", "攻击珠", "素材："],
+    "修罗原珠": ["可做装饰珠", "素材："],
+    # V1.4.1：技能效果（总述 + 逐等级）。
+    # 用「指令 参数」作键 —— 单独的「攻击」已被上面那条占用。
+    "技能 攻击": ["效果", "提高玩家的攻击力", "攻击力+3", "Lv7"],
+    "技能 痛恨一击": ["效果", "负会心发动时"],
+    # V1.4.0：分部位肉质（同一个怪物名在「怪物」与「肉质」下断言不同，
+    # 所以这几条用「指令 参数」作键）
+    "怪物 爵银龙": [
+        "角破坏",
+        "翼破坏",
+        "前肢破坏",
+        "本体剥取",
+        "尾巴剥取",
+        "弱点",
+        "/mh 肉质",  # 怪物卡上要提示去哪查具体肉质
+    ],
+    "肉质 爵银龙": ["肉质", "晕", "弱点特效", "头部", "尾巴尖"],
+    "肉质 泡狐龙": ["肉质", "晕", "状态变化", "变化状态"],
+    "肉质 棘茶龙": ["肉质", "状态变化", "变化状态"],
+    # 部位名清洗修好后，水兽才有 7 个部位（此前是 0 个）
+    "肉质 水兽": ["肉质", "头部", "7 个部位"],
+    # V1.4.0：装饰品
+    "装饰品 攻击珠": ["所需素材", "修罗原珠"],
+    "装饰品 痛恨龙珠": ["所需素材", "评价值", "土砂龙"],
+    # /mh help <指令> 展开示例
+    "help 武器": ["/mh 武器 怪异化的皮"],
 }
 
 
@@ -162,17 +197,46 @@ def main(argv=None) -> int:
             print("  [空结果]")
             failures += 1
 
-        # 回归断言：这些查询必须包含指定小节/关键词
-        required = REQUIRED_SECTIONS.get(argument)
-        if required and result.card:
-            haystack = "\n".join(
-                section.title
-                + "\n"
-                + "\n".join(
-                    "".join(s for s, _ in line.segments) for line in section.lines
+        # 回归断言：这些查询必须包含指定小节/关键词。
+        # 先按「指令 参数」找，再退回只按参数找 —— 同一个参数名可能属于
+        # 两个指令（例如「爵银龙」既查 /mh 怪物 又查 /mh 肉质），
+        # 只按参数索引会让两边互相打架。
+        required = REQUIRED_SECTIONS.get(f"{name} {argument}".strip())
+        if required is None:
+            required = REQUIRED_SECTIONS.get(argument)
+        if required:
+            # 卡片内容分散在多个地方：分区标题/行文本/脚注/计数/指标条/副标题，
+            # 以及 kind="table" 那种把数据放在 data 里的表格。
+            chunks = []
+            if result.card:
+                for section in result.card.sections:
+                    chunks.append(section.title)
+                    chunks.append(section.footer or "")
+                    chunks.append(section.count or "")
+                    chunks.append(
+                        "\n".join(
+                            "".join(s for s, _ in line.segments)
+                            for line in section.lines
+                        )
+                    )
+                    data = section.data or {}
+                    chunks.append(
+                        " ".join(str(item) for item in data.get("headers") or [])
+                    )
+                    for row in data.get("rows") or []:
+                        chunks.append(" ".join(str(cell) for cell in row))
+                    chunks.append(str(data.get("note") or ""))
+                chunks.append(
+                    "\n".join(
+                        f"{label} {value}"
+                        for label, value in (result.card.metrics or [])
+                    )
                 )
-                for section in result.card.sections
-            )
+                chunks.append(result.card.subtitle or "")
+                chunks.append(result.card.footnote or "")
+            else:
+                chunks.append(result.text or "")
+            haystack = "\n".join(chunks)
             for keyword in required:
                 if keyword in haystack:
                     print(f"  [通过] 含「{keyword}」")

@@ -603,7 +603,7 @@ def handle_quest(snapshot: Snapshot, argument: str) -> CommandResult:
 
 
 def handle_help(snapshot: Snapshot, argument: str) -> CommandResult:
-    return CommandResult(text=render_help(snapshot))
+    return CommandResult(text=render_help(snapshot, argument))
 
 
 # --------------------------------------------------------------------------
@@ -766,7 +766,7 @@ def build_weakness_section(snapshot: Snapshot, monster: MonsterInfo) -> Section 
 
     element_line = " · ".join(
         f"{ELEMENT_LABELS.get(key, key)} {elements.get(key, 0)}"
-        for key in ("fire", "water", "ice", "elect", "dragon")
+        for key in ("fire", "water", "elect", "ice", "dragon")
         if key in elements
     )
     motion_line = " · ".join(
@@ -791,7 +791,8 @@ def build_weakness_section(snapshot: Snapshot, monster: MonsterInfo) -> Section 
         lines=lines,
         glyph="note",
         count="通常状态",
-        footer="各项取全部位最高肉质；源数据的部位状态无对应字段，故只取通常状态",
+        # 这一块只给「全部位最高值」，具体到每个部位看 /mh 肉质
+        footer=(f"各项取全部位最高值；查具体部位肉质用 /mh 肉质 {monster.name}"),
     )
 
 
@@ -1064,7 +1065,11 @@ def build_weapon_detail_card(snapshot: Snapshot, weapon_key: str) -> Card | None
 
 
 def build_skill_card(snapshot: Snapshot, skill: str, decorations: list[dict]) -> Card:
-    """技能卡：提供该技能的装饰珠（按孔位排序）。"""
+    """技能卡：**效果（总述 + 逐等级）** + 装饰珠与配方（V1.4.1）。
+
+    一个技能最多对应 4 颗珠（实测 161 个技能里最大的就是 4），
+    所以配方行最多 4 行、约 +124px，且实测 788px 宽度内不会换行。
+    """
     metrics = [("可用装饰珠", f"{len(decorations)} 个")]
     if decorations:
         metrics.append(
@@ -1073,22 +1078,56 @@ def build_skill_card(snapshot: Snapshot, skill: str, decorations: list[dict]) ->
                 f"Lv{decorations[0].get('slot')}–Lv{decorations[-1].get('slot')}",
             )
         )
-    sections = [
+
+    sections: list[Section] = []
+
+    # ---- 效果（V1.4.1）----
+    effect = snapshot.skill_effect(skill)
+    levels = [text for text in (effect.get("levels") or []) if text]
+    explain = effect.get("explain") or ""
+    if explain or levels:
+        effect_lines: list[Line] = []
+        if explain:
+            effect_lines.append(Line.of((explain, "body")))
+        # 等级从 1 开始（源数据的下标是 0 基，已在提取时 +1 对齐）
+        for index, text in enumerate(effect.get("levels") or [], start=1):
+            if text:
+                effect_lines.append(Line.of((f"Lv{index}", "tag"), (text, "body")))
+        sections.append(
+            Section(
+                title="效果",
+                lines=effect_lines,
+                glyph="skill",
+                count=f"{len(levels)} 级" if len(levels) > 1 else "",
+                footer="" if levels else "百龙技能固定 Lv1，没有分级效果",
+            )
+        )
+        if levels:
+            metrics.append(("最高等级", f"Lv{len(effect.get('levels') or [])}"))
+
+    # ---- 装饰珠（含配方）----
+    lines: list[Line] = []
+    for item in decorations[:MAX_DECO_LIST]:
+        lines.append(
+            Line.of(
+                (f"{item.get('slot')}孔", "tag"),
+                (item.get("name") or "", "body"),
+                (f"技能 Lv{item.get('skill_lv')}", "value"),
+            )
+        )
+        recipe = _deco_recipe_text(snapshot, item)
+        if recipe:
+            lines.append(Line.of((f"　素材：{recipe}", "muted")))
+    sections.append(
         Section(
             title="提供该技能的装饰珠",
-            lines=[
-                Line.of(
-                    (f"{item.get('slot')}孔", "tag"),
-                    (item.get("name") or "", "body"),
-                    (f"技能 Lv{item.get('skill_lv')}", "value"),
-                )
-                for item in decorations[:MAX_DECO_LIST]
-            ],
+            lines=lines,
             glyph="skill",
             count="按孔位",
             footer="孔位等级即珠子能镶嵌的最小孔；技能等级是单颗珠提供的等级",
         )
-    ]
+    )
+
     return Card(
         title=skill,
         sections=sections,
@@ -1104,20 +1143,25 @@ def build_material_deco_card(
     material: MaterialInfo | None,
     decorations: list[dict],
 ) -> Card:
-    """「素材 -> 可做装饰珠」。"""
+    """「素材 -> 可做装饰珠」（每颗珠附一行配方，V1.4.0 起）。"""
+    lines: list[Line] = []
+    for item in decorations[:MAX_DECO_LIST]:
+        lines.append(
+            Line.of(
+                (f"{item.get('slot')}孔", "tag"),
+                (item.get("name") or "", "body"),
+                (f"{item.get('skill')}", "value"),
+            )
+        )
+        recipe = _deco_recipe_text(snapshot, item)
+        if recipe:
+            lines.append(Line.of((f"　素材：{recipe}", "muted")))
     return Card(
         title=material_name,
         sections=[
             Section(
                 title="可做装饰珠",
-                lines=[
-                    Line.of(
-                        (f"{item.get('slot')}孔", "tag"),
-                        (item.get("name") or "", "body"),
-                        (f"{item.get('skill')}", "value"),
-                    )
-                    for item in decorations[:MAX_DECO_LIST]
-                ],
+                lines=lines,
                 glyph="skill",
                 count=f"共 {len(decorations)} 个",
                 footer=(
@@ -1132,6 +1176,23 @@ def build_material_deco_card(
         metrics=[("可做装饰珠", f"{len(decorations)} 个")],
         footnote=_footnote(snapshot),
     )
+
+
+def _deco_recipe_text(snapshot: Snapshot, deco: dict) -> str:
+    """一颗珠的配方写成一行：`修罗原珠×5、金狮子的黑毛×3`。
+
+    百龙珠的类别需求也带上——它只记「评价值」不记个数，所以写「评价值 N」。
+    """
+    pieces = []
+    for item_id, count in deco.get("materials") or []:
+        pieces.append(f"{_item_name(snapshot, {'item_id': str(item_id)})}×{count}")
+    category = deco.get("category") or {}
+    if category.get("name"):
+        point = category.get("point")
+        pieces.append(
+            f"{category['name']}（评价值 {point}）" if point else category["name"]
+        )
+    return "、".join(pieces)
 
 
 def handle_weapon(snapshot: Snapshot, argument: str) -> CommandResult:
@@ -1222,60 +1283,368 @@ def handle_weapon(snapshot: Snapshot, argument: str) -> CommandResult:
 
 
 def handle_skill(snapshot: Snapshot, argument: str) -> CommandResult:
-    """`/mh 技能 <技能名或素材名>` —— 双向（A23 改版：取代原定的 /mh 装饰品）。"""
+    """`/mh 技能 <技能名 / 装饰珠名 / 素材名>` —— 三向自动识别。
+
+    ## 为什么必须「精确名优先」
+
+    实测 **161 个技能名里有 20 个是某个珠名的前缀**（`心眼`→`心眼珠`、
+    `匠`→`匠珠`、`快吃`、`合气`、`激励`…）。如果按「先试技能、再试素材」的顺序
+    一路模糊下去，`/mh 技能 心眼` 会在「技能心眼」和「心眼珠系列」之间摇摆。
+    好在装饰珠名与技能名、素材名三者的交集为空，所以：
+    **谁精确命中就用谁**，都只有模糊命中时再按匹配质量排序。
+    """
     if not argument:
         return CommandResult(
             text=(
-                "用法：/mh 技能 <技能名或素材名>\n"
+                "用法：/mh 技能 <技能名 / 装饰珠名 / 素材名>\n"
                 "例如：/mh 技能 攻击\n"
+                "      /mh 技能 攻击珠\n"
                 "      /mh 技能 修罗原珠"
             )
         )
 
     query = argument.strip()
-
-    # 先按技能名（精确 -> 前缀 -> 包含 -> 模糊）
     skill_matches = snapshot.search_skills(query, limit=6)
-    usable = [m for m in skill_matches if not m.ambiguous]
-    if usable:
-        target = usable[0]
+    deco_matches = snapshot.search_decorations(query, limit=6)
+    material_matches = snapshot.search_materials(query, limit=6)
+
+    def _exact(matches):
+        return next((m for m in matches if m.score == 0 and not m.ambiguous), None)
+
+    # 1) 精确命中：技能 > 装饰珠 > 素材（三者名字本来不重叠，顺序只是兜底）
+    target = _exact(skill_matches)
+    if target is not None:
         decorations = snapshot.decorations_for_skill(target.name)
         if decorations:
-            card = build_skill_card(snapshot, target.name, decorations)
-            if target.note:
-                card.subtitle = target.note
-            return CommandResult(card=card)
-
-    # 再按素材名 -> 该素材能做的装饰珠
-    material_matches = snapshot.search_materials(query, limit=6)
-    usable_material = [m for m in material_matches if not m.ambiguous]
-    if usable_material:
-        target = usable_material[0]
-        decorations = snapshot.decorations_for_material(target.key)
-        material = snapshot.material(target.key)
-        if decorations:
-            card = build_material_deco_card(
-                snapshot, target.name, material, decorations
+            return CommandResult(
+                card=build_skill_card(snapshot, target.name, decorations)
             )
-            if target.note:
-                card.subtitle = target.note
-            return CommandResult(card=card)
-        return CommandResult(
-            text=f"没有装饰珠需要「{target.name}」。可以用 /mh 素材 {target.name} 看它的其他用途。"
-        )
 
-    if skill_matches:
-        lines = [f"「{query}」同时接近几个技能，请回复更具体的名字："]
-        lines.extend(f"· {m.name}" for m in skill_matches)
-        return CommandResult(text="\n".join(lines))
-    if material_matches:
-        lines = [f"「{query}」同时接近几个素材，请回复更具体的名字："]
-        lines.extend(f"· {m.name}" for m in material_matches)
-        return CommandResult(text="\n".join(lines))
+    target = _exact(deco_matches)
+    if target is not None:
+        deco = snapshot.decoration(target.key)
+        if deco:
+            return CommandResult(card=build_decoration_card(snapshot, deco))
+
+    target = _exact(material_matches)
+    if target is not None:
+        return _skill_material_result(snapshot, target)
+
+    # 2) 没有精确命中，按匹配质量挑最接近的一类
+    candidates = []
+    for rank, matches in enumerate((skill_matches, deco_matches, material_matches)):
+        best = next((m for m in matches if not m.ambiguous), None)
+        if best is not None:
+            candidates.append((best.score, rank, best, matches))
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        _score, rank, best, matches = candidates[0]
+        if len(matches) == 1 or best.score <= 2:
+            if rank == 0:
+                decorations = snapshot.decorations_for_skill(best.name)
+                if decorations:
+                    card = build_skill_card(snapshot, best.name, decorations)
+                    if best.note:
+                        card.subtitle = best.note
+                    return CommandResult(card=card)
+            elif rank == 1:
+                deco = snapshot.decoration(best.key)
+                if deco:
+                    card = build_decoration_card(snapshot, deco)
+                    if best.note:
+                        card.subtitle = best.note
+                    return CommandResult(card=card)
+            else:
+                return _skill_material_result(snapshot, best)
+
+    # 3) 都不确定：把候选列出来让用户挑
+    for label, matches in (
+        ("技能", skill_matches),
+        ("装饰珠", deco_matches),
+        ("素材", material_matches),
+    ):
+        if matches:
+            lines = [f"「{query}」同时接近几个{label}，请回复更具体的名字："]
+            lines.extend(f"· {m.name}" for m in matches)
+            return CommandResult(text="\n".join(lines))
 
     return CommandResult(
-        text=f"没有找到名为「{query}」的技能或素材。可以只输入名字的一部分再试试。"
+        text=f"没有找到名为「{query}」的技能、装饰珠或素材。可以只输入名字的一部分再试试。"
     )
+
+
+def _skill_material_result(snapshot: Snapshot, target) -> CommandResult:
+    """「素材 -> 可做装饰珠」分支。"""
+    decorations = snapshot.decorations_for_material(target.key)
+    material = snapshot.material(target.key)
+    if not decorations:
+        return CommandResult(
+            text=(
+                f"没有装饰珠需要「{target.name}」。"
+                f"可以用 /mh 素材 {target.name} 看它的其他用途。"
+            )
+        )
+    card = build_material_deco_card(snapshot, target.name, material, decorations)
+    if target.note:
+        card.subtitle = target.note
+    return CommandResult(card=card)
+
+
+# --------------------------------------------------------------------------
+# V1.4.0：分部位肉质 / 装饰品
+# --------------------------------------------------------------------------
+
+# 肉质表的列（游戏内猎人笔记的顺序：物理三列 -> 五属性 -> 晕）。
+# 注意**雷在冰之前**，与 mhrice 的键序（fire/water/ice/elect/dragon）不同。
+MEAT_HEADERS = ("斩", "打", "弹", "火", "水", "雷", "冰", "龙", "晕")
+MEAT_GROUPS = (
+    {"start": 0, "end": 2, "name": "物理"},
+    {"start": 3, "end": 7, "name": "属性"},
+)
+MEAT_WEAK_THRESHOLD = 45  # 物理肉质 ≥45 可触发「弱点特效」
+MEAT_STATE_DELTA = 10  # 与通常状态相差多少才算「有变化」
+MEAT_STATE_MAX = 4  # 最多展示几个变化状态
+MEAT_STATE_FIELDS = 3  # 每个状态最多写几处变化
+
+
+def _meat_state_lines(parts: list[dict]) -> tuple[list[Line], str]:
+    """把「状态变体」整理成几行说明。
+
+    ## 为什么叫「变化状态 N」而不是「愤怒时」
+
+    源数据里**没有任何字段**把变体下标关联到状态名（1788 个肉质 group 的键集合
+    完全一致，`parts_break_data` / `anger_data` 都对不上）。外部图鉴同样只把它们
+    编号成「变化状态 1/2/3」，所以沿用这个说法——这是玩家在图鉴里能看到的
+    同一套编号，不是我们编的标签。
+
+    ## 只列变化明显的
+
+    与通常状态相差 <10 的格子视为无变化（同一部位常有几份几乎相同的冗余变体）。
+    状态按「变化格数」降序，最多取 4 个，其余在脚注里说明。
+    """
+    if not parts:
+        return [], ""
+    variant_count = max(len(part["v"]) for part in parts)
+    if variant_count <= 1:
+        return [], ""
+
+    candidates = []
+    identical = 0
+    for variant in range(1, variant_count):
+        changes = []
+        for part in parts:
+            values = part["v"]
+            if variant >= len(values):
+                continue
+            base = values[0]
+            current = values[variant]
+            for column, new_value in enumerate(current):
+                old_value = base[column] if column < len(base) else 0
+                if abs(new_value - old_value) >= MEAT_STATE_DELTA:
+                    changes.append((part["n"], column, old_value, new_value))
+        if not changes:
+            identical += 1
+            continue
+        candidates.append((variant, changes))
+
+    if not candidates:
+        return [], "所有状态变体的肉质与通常状态一致"
+
+    candidates.sort(key=lambda item: -len(item[1]))
+    candidates = candidates[:MEAT_STATE_MAX]
+
+    lines = []
+    for variant, changes in candidates:
+        changes.sort(key=lambda item: -abs(item[3] - item[2]))
+        pieces = [
+            f"{name} {MEAT_HEADERS[column]} {old}→{new}"
+            for name, column, old, new in changes[:MEAT_STATE_FIELDS]
+        ]
+        if len(changes) > MEAT_STATE_FIELDS:
+            pieces.append(f"等 {len(changes)} 处")
+        lines.append(
+            Line.of((f"变化状态{variant}", "tag"), ("、".join(pieces), "body"))
+        )
+
+    notes = []
+    hidden_states = variant_count - 1 - len(candidates)
+    if hidden_states > 0:
+        notes.append(f"另有 {hidden_states} 个状态的差异小于 {MEAT_STATE_DELTA}")
+    if identical:
+        notes.append(f"{identical} 个状态与通常状态完全一致")
+    return lines, "；".join(notes)
+
+
+def build_meat_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
+    """分部位肉质卡。"""
+    parts = list(monster.meat or [])
+    rows = [[part["n"], *(part["v"][0] if part["v"] else [])] for part in parts]
+    sections = [
+        Section(
+            title="肉质（通常状态）",
+            kind="table",
+            count=f"{len(parts)} 个部位",
+            data={
+                "headers": list(MEAT_HEADERS),
+                "groups": list(MEAT_GROUPS),
+                "rows": rows,
+                "highlight": {"from": 0, "to": 2, "min": MEAT_WEAK_THRESHOLD},
+            },
+            footer=(
+                f"物理肉质 ≥{MEAT_WEAK_THRESHOLD}（橙色）可触发「弱点特效」；"
+                "0 表示完全无效"
+            ),
+        )
+    ]
+
+    state_lines, state_note = _meat_state_lines(parts)
+    if state_lines:
+        sections.append(
+            Section(
+                title="状态变化",
+                lines=state_lines,
+                glyph="note",
+                count="部分状态" if state_note else "",
+                footer=state_note or "状态名在源数据里没有记录，只能按图鉴的编号称呼",
+            )
+        )
+    elif state_note:
+        sections.append(
+            Section(
+                title="状态变化",
+                lines=[Line.of((state_note, "muted"))],
+                glyph="note",
+            )
+        )
+
+    variant_count = max((len(part["v"]) for part in parts), default=1)
+    return Card(
+        title=monster.name,
+        sections=sections,
+        metrics=[
+            ("部位", f"{len(parts)} 个"),
+            ("状态", f"{variant_count} 种" if variant_count > 1 else "无变化"),
+        ],
+        badge="肉质",
+        footnote=_footnote(snapshot),
+    )
+
+
+def build_decoration_card(snapshot: Snapshot, deco: dict) -> Card:
+    """单颗装饰珠的详情卡（V1.4.0 加回 `/mh 装饰品`）。"""
+    slot = deco.get("slot")
+    skill = deco.get("skill") or ""
+    skill_lv = deco.get("skill_lv")
+    metrics = [("孔位", f"{slot}孔" if slot else "—")]
+    if skill:
+        metrics.append(("技能", f"{skill} Lv{skill_lv}" if skill_lv else skill))
+    if deco.get("rarity"):
+        metrics.append(("稀有度", f"R{deco['rarity']}"))
+
+    rows = []
+    for item_id, count in deco.get("materials") or []:
+        rows.append(
+            Line.of(
+                (_item_name(snapshot, {"item_id": str(item_id)}), "body"),
+                (f"×{count}", "value"),
+            )
+        )
+    category = deco.get("category") or {}
+    if category.get("name"):
+        point = category.get("point")
+        rows.append(
+            Line.of(
+                ("另需", "tag"),
+                (category["name"], "body"),
+                (f"评价值 {point}" if point else "任一", "value"),
+            )
+        )
+
+    return Card(
+        title=deco.get("name") or "",
+        sections=[
+            Section(
+                title="所需素材",
+                lines=rows or [Line.of(("源数据里没有这颗珠的配方", "muted"))],
+                glyph="note",
+                footer=(
+                    "百龙珠的类别需求只记「评价值」，不记个数"
+                    if category.get("name")
+                    else ""
+                ),
+            )
+        ],
+        metrics=metrics,
+        badge="百龙装饰品" if deco.get("kind") == "rampage" else "装饰品",
+        footnote=_footnote(snapshot),
+    )
+
+
+def handle_meat(snapshot: Snapshot, argument: str) -> CommandResult:
+    """`/mh 肉质 <怪物名>` —— 分部位肉质表。"""
+    if not argument:
+        return CommandResult(text="用法：/mh 肉质 <怪物名>\n例如：/mh 肉质 爵银龙")
+    matches = snapshot.search_monsters(argument.strip(), limit=12)
+    if not matches:
+        return CommandResult(
+            text=f"没有找到名为「{argument}」的怪物。可以只输入名字的一部分再试试。"
+        )
+    exact = [m for m in matches if m.score == 0]
+    target = (
+        exact[0] if len(exact) == 1 else (matches[0] if len(matches) == 1 else None)
+    )
+    if target is not None:
+        monster = snapshot.monster(target.key)
+        if monster and monster.meat:
+            return CommandResult(card=build_meat_card(snapshot, monster))
+        if monster:
+            return CommandResult(
+                text=f"源数据里没有「{monster.name}」的肉质数据（小动物没有肉质表）。"
+            )
+
+    lines = [f"「{argument}」匹配到 {len(matches)} 只怪物，请回复更具体的名字："]
+    for match in matches:
+        note = f"  {match.note}" if match.note else ""
+        lines.append(f"· {match.name}{note}")
+    lines.append("")
+    lines.append("例如：/mh 肉质 " + matches[0].name)
+    return CommandResult(text="\n".join(lines))
+
+
+def handle_decoration(snapshot: Snapshot, argument: str) -> CommandResult:
+    """`/mh 装饰品 <珠名>` —— 单颗装饰珠的配方。"""
+    if not argument:
+        return CommandResult(
+            text=(
+                "用法：/mh 装饰品 <装饰珠名>\n"
+                "例如：/mh 装饰品 攻击珠\n"
+                "      /mh 装饰品 痛恨龙珠"
+            )
+        )
+    matches = snapshot.search_decorations(argument.strip(), limit=12)
+    if not matches:
+        return CommandResult(
+            text=f"没有找到名为「{argument}」的装饰珠。可以只输入名字的一部分再试试。"
+        )
+    exact = [m for m in matches if m.score == 0]
+    target = (
+        exact[0] if len(exact) == 1 else (matches[0] if len(matches) == 1 else None)
+    )
+    if target is not None:
+        deco = snapshot.decoration(target.key)
+        if deco:
+            card = build_decoration_card(snapshot, deco)
+            if target.note:
+                card.subtitle = target.note
+            return CommandResult(card=card)
+
+    lines = [f"「{argument}」匹配到 {len(matches)} 颗装饰珠，请回复更具体的名字："]
+    for match in matches:
+        note = f"  {match.note}" if match.note else ""
+        lines.append(f"· {match.name}{note}")
+    lines.append("")
+    lines.append("例如：/mh 装饰品 " + matches[0].name)
+    return CommandResult(text="\n".join(lines))
 
 
 # --------------------------------------------------------------------------
@@ -1286,48 +1655,63 @@ COMMANDS: list[Command] = [
     Command(
         name="素材",
         usage="/mh 素材 <素材名>",
-        summary="查询素材的获取方式（怪物、部位/方式、概率、数量、地图、任务）",
+        summary="素材的获取方式（怪物、部位/方式、概率、数量、地图、任务）",
         handler=handle_material,
         examples=("/mh 素材 龙玉", "/mh 素材 火龙的天鳞"),
     ),
     Command(
         name="怪物",
         usage="/mh 怪物 <怪物名>",
-        summary="查询某只怪物的完整掉落表",
+        summary="怪物的弱点与完整掉落表",
         handler=handle_monster,
         examples=("/mh 怪物 爵银龙",),
     ),
     Command(
+        name="肉质",
+        usage="/mh 肉质 <怪物名>",
+        summary="分部位肉质（斩打弹 + 五属性 + 晕），含状态变化",
+        handler=handle_meat,
+        examples=("/mh 肉质 爵银龙", "/mh 肉质 泡狐龙"),
+    ),
+    Command(
         name="任务",
         usage="/mh 任务 <任务名>",
-        summary="查询某任务的星级、地图、出场怪物与结算奖励",
+        summary="任务的星级、地图、出场怪物与结算奖励",
         handler=handle_quest,
         examples=("/mh 任务 撕裂寂静者",),
     ),
     Command(
         name="武器",
-        usage="/mh 武器 <素材名或武器名> [武器类型]",
-        summary="素材能做的武器 / 某把武器的详情（攻击、锋利度、孔位、派生、素材）",
+        usage="/mh 武器 <素材名或武器名> [类型]",
+        summary="素材能做的武器 / 武器详情；也可写「伞鸟枪」这种「怪物+类型」",
         handler=handle_weapon,
         examples=(
             "/mh 武器 怪异化的皮",
             "/mh 武器 怪异化的皮 太刀",
+            "/mh 武器 伞鸟枪",
             "/mh 武器 炎火杰大剑",
         ),
     ),
     Command(
         name="技能",
         usage="/mh 技能 <技能名或素材名>",
-        summary="某个技能有哪些装饰珠 / 某素材能做哪些装饰珠",
+        summary="某个技能有哪些装饰珠（含配方）/ 某素材能做哪些装饰珠",
         handler=handle_skill,
         examples=("/mh 技能 攻击", "/mh 技能 修罗原珠"),
     ),
     Command(
+        name="装饰品",
+        usage="/mh 装饰品 <珠名>",
+        summary="单颗装饰珠的孔位、技能与所需素材",
+        handler=handle_decoration,
+        examples=("/mh 装饰品 攻击珠", "/mh 装饰品 痛恨龙珠"),
+    ),
+    Command(
         name="help",
-        usage="/mh help",
-        summary="显示这份帮助",
+        usage="/mh help [指令]",
+        summary="显示全部指令；加指令名看示例",
         handler=handle_help,
-        examples=("/mh help",),
+        examples=("/mh help", "/mh help 武器"),
     ),
 ]
 
@@ -1335,26 +1719,63 @@ COMMAND_INDEX: dict[str, Command] = {
     command.name.lower(): command for command in COMMANDS
 }
 
+# 帮助列表的分组（只影响展示顺序，不影响指令注册）
+HELP_GROUPS = (
+    ("查素材与怪物", ("素材", "怪物", "肉质", "任务")),
+    ("查装备", ("武器", "技能", "装饰品")),
+    ("其它", ("help",)),
+)
 
-def render_help(snapshot: Snapshot) -> str:
-    """由命令表生成帮助文本，避免手写帮助与实现脱节。"""
-    lines = ["怪物猎人素材查询 —— 可用指令", ""]
-    for command in COMMANDS:
-        lines.append(command.usage)
-        lines.append(f"    {command.summary}")
+HELP_TITLE = "怪物猎人素材查询 —— 可用指令"
+
+
+def render_help(snapshot: Snapshot, topic: str = "") -> str:
+    """帮助文本。
+
+    ## 为什么重做过
+
+    旧版每条指令后面都跟一行示例，9 条指令就是 20 多行，手机上要滑好几屏——
+    实际上没人会读完。现在：
+
+    * 默认只列「指令 — 一句话」，并按「查素材与怪物 / 查装备」分组；
+    * 示例移到 `/mh help <指令>`，只在需要时展开。
+    """
+    topic = (topic or "").strip()
+    if topic:
+        command = COMMAND_INDEX.get(topic.lower())
+        if command is None:
+            parts = topic.split()
+            command = COMMAND_INDEX.get(parts[0].lower()) if parts else None
+        if command is None:
+            return f"没有名为「{topic}」的指令。\n\n{render_help(snapshot)}"
+        lines = [command.usage, "", command.summary]
         if command.examples:
-            lines.append(f"    示例：{command.examples[0]}")
+            lines.append("")
+            lines.extend(f"  {example}" for example in command.examples)
+        return "\n".join(lines)
+
+    lines = [HELP_TITLE, ""]
+    for title, names in HELP_GROUPS:
+        group = [
+            COMMAND_INDEX[name.lower()]
+            for name in names
+            if name.lower() in COMMAND_INDEX
+        ]
+        if not group:
+            continue
+        lines.append(f"【{title}】")
+        for command in group:
+            lines.append(f"{command.usage}  —  {command.summary}")
         lines.append("")
 
     stats = snapshot.stats()
     lines.append(
-        f"数据：{stats['materials']} 种素材 / {stats['monsters']} 只怪物 / {stats['quests']} 个任务"
+        f"数据：{stats['materials']} 素材 / {stats['monsters']} 怪物 / {stats['quests']} 任务"
     )
-    sample = snapshot.rare_material_names(3)
+    sample = snapshot.rare_material_names(2)
     if sample:
         lines.append("试试：" + "、".join(f"/mh 素材 {name}" for name in sample))
-    lines.append("")
-    lines.append("查询用「精确 → 别名 → 包含」逐级匹配；命中多条时会列出候选让你挑。")
+    lines.append("想看示例：/mh help 武器")
     return "\n".join(lines)
 
 
