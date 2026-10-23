@@ -289,6 +289,8 @@ class MonsterInfo:
     # 分部位肉质明细（V1.4.0）：[{"n": 部位名, "v": [[斩打弹+火水雷冰龙+晕], ...]}, ...]
     # 每个部位的 `v` 是状态变体列表，下标 0 = 通常状态。
     meat: list[dict] = field(default_factory=list)
+    # 兽种（V1.4.2，如「飞龙种」）。小动物在官方分类里不细分，所以为空。
+    species: str = ""
 
     @property
     def is_small(self) -> bool:
@@ -739,6 +741,7 @@ class Snapshot:
             map_names=list(raw.get("map_names") or []),
             weakness=raw.get("weakness"),
             meat=list(raw.get("meat") or []),
+            species=raw.get("species") or "",
         )
 
     def search_monsters(self, query: str, limit: int = 12) -> list[Match]:

@@ -352,12 +352,16 @@ def build_material_card(snapshot: Snapshot, material: MaterialInfo) -> Card:
 
 
 def build_monster_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
-    """怪物卡：弱点 + 出现地图 + 按素材分块的掉落表。"""
+    """怪物卡：兽种 + 弱点 + 出现地图 + 按素材分块的掉落表。"""
     # 副标题改成指标条（A25 改动二）：中缀点串是最像生成式模板的一处写法，
     # 竖线分隔的指标条更省高度、也更容易扫读。
     metrics: list[tuple[str, str]] = []
     if monster.is_small:
         metrics.append(("类别", "小动物"))
+    # 兽种放在最前面：它是「这是什么怪」的第一层信息（V1.4.2）。
+    # 小动物在官方分类里不细分兽种，所以这里只在有值时显示。
+    if monster.species:
+        metrics.append(("兽种", monster.species))
     metrics.append(("掉落记录", f"{len(monster.drops)} 条"))
     if monster.alias:
         metrics.append(("别名", monster.alias))
@@ -1518,13 +1522,16 @@ def build_meat_card(snapshot: Snapshot, monster: MonsterInfo) -> Card:
         )
 
     variant_count = max((len(part["v"]) for part in parts), default=1)
+    # 兽种放在最前面，与怪物卡保持一致（同一种怪的卡在两处可对照）
+    metrics: list[tuple[str, str]] = []
+    if monster.species:
+        metrics.append(("兽种", monster.species))
+    metrics.append(("部位", f"{len(parts)} 个"))
+    metrics.append(("状态", f"{variant_count} 种" if variant_count > 1 else "无变化"))
     return Card(
         title=monster.name,
         sections=sections,
-        metrics=[
-            ("部位", f"{len(parts)} 个"),
-            ("状态", f"{variant_count} 种" if variant_count > 1 else "无变化"),
-        ],
+        metrics=metrics,
         badge="肉质",
         footnote=_footnote(snapshot),
     )

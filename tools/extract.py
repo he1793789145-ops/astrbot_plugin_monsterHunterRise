@@ -1953,6 +1953,7 @@ def build_snapshot(
         f"{meat_rows} 行（含状态变体）"
     )
     monsters_out = {}
+    missing_species = []
     for em, info in monsters.items():
         drops = monster_drops.get(em)
         if not drops:
@@ -1961,6 +1962,12 @@ def build_snapshot(
         names = entry.get("map_names") or carried.get(f"monsters:{em}") or []
         if names:
             entry["map_names"] = names
+        # 兽种（官方分类，见 MONSTER_SPECIES 的说明）
+        species = SPECIES_BY_NAME.get(entry.get("name") or "")
+        if species:
+            entry["species"] = species
+        else:
+            missing_species.append(entry.get("name") or str(em))
         weak = weakness.get(int(em))
         if weak:
             entry["weakness"] = weak
@@ -1969,6 +1976,11 @@ def build_snapshot(
             entry["meat"] = meat
         monsters_out[em] = entry
     print(f"  快照内怪物: {len(monsters_out)} 只大型")
+    if missing_species:
+        # 表里没覆盖到的怪物：宁可空着也不瞎猜，但要在日志里显形
+        print(f"  [注意] {len(missing_species)} 只怪物没有兽种: {missing_species}")
+    else:
+        print(f"  兽种: 全部 {len(monsters_out)} 只都已归类")
 
     # 小动物：只保留有掉落的，并补上栖息地图
     small_out = {}
@@ -2194,6 +2206,108 @@ def build_skill_effects(mhrice: dict) -> dict:
         if explain and name not in result:
             result[name] = {"explain": explain, "levels": []}
     return result
+
+
+# 怪物所属**兽种**（游戏内猎人笔记的分类）。
+#
+# ## 为什么不用 mhrice 里的 species 表
+#
+# `species.em_species_list[].em_dragon_species` 看着像兽种，实际**不是**：
+#   * 只有 7 个取值，79 条记录里 **36 条是 `Invalid`**
+#     （钢龙/炎王龙/大名盾蟹/金狮子/妃蜘蛛/河童蛙全在里面）；
+#   * 分类还会错——伞鸟与毒妖鸟被标成 `FlyingDragon`，而它们在游戏里是
+#     **鸟龙种**。这是引擎内部的移动/AI 类别，不是图鉴分类。
+#
+# 所以这里按游戏内猎人笔记的官方分类写表，逐条与外部图鉴的「怪物数据」页
+# 核对过：12 个兽种合计 **78 只**，与该页的 78 个结果一一对应。
+# 小型怪物在官方分类里不细分兽种，因此**只有大型怪有兽种**。
+MONSTER_SPECIES = {
+    "古龙种": (
+        "钢龙",
+        "霞龙",
+        "炎王龙",
+        "神秘红光天彗龙",
+        "风神龙",
+        "雷神龙",
+        "百龙渊源雷神龙",
+        "天廻龙",
+        "爵银龙",
+        "冥渊龙",
+        "怪异克服钢龙",
+        "怪异克服霞龙",
+        "怪异克服炎王龙",
+        "怪异克服天廻龙",
+        "怪异克服天彗龙",
+        "原初形态爵银龙",
+        "冰呪龙",
+        "岚龙",
+    ),
+    "飞龙种": (
+        "雌火龙",
+        "霸主・雌火龙",
+        "火龙",
+        "霸主・火龙",
+        "奇怪龙",
+        "岩龙",
+        "角龙",
+        "霸主・角龙",
+        "轰龙",
+        "迅龙",
+        "冰牙龙",
+        "爆鳞龙",
+        "银火龙",
+        "金火龙",
+        "电龙",
+        "千刃龙",
+        "月迅龙",
+        "红莲爆鳞龙",
+        "棘龙",
+        "棘茶龙",
+    ),
+    "牙兽种": (
+        "青熊兽",
+        "霸主・青熊兽",
+        "白兔兽",
+        "赤甲兽",
+        "天狗兽",
+        "绯天狗兽",
+        "雪鬼兽",
+        "金狮子",
+        "激昂金狮子",
+        "刚缠兽",
+    ),
+    "海龙种": (
+        "水兽",
+        "泡狐龙",
+        "霸主・泡狐龙",
+        "焰狐龙",
+        "人鱼龙",
+        "冰人鱼龙",
+        "泥翁龙",
+        "熔翁龙",
+    ),
+    "牙龙种": (
+        "雷狼龙",
+        "霸主・雷狼龙",
+        "怨虎龙",
+        "嗟怨震天怨虎龙",
+        "飞雷龙",
+        "冰狼龙",
+    ),
+    "鸟龙种": ("镰鼬龙王", "眠狗龙王", "毒狗龙王", "伞鸟", "毒妖鸟", "搔鸟"),
+    "铗角种": ("妃蜘蛛", "炽妃蜘蛛"),
+    "兽龙种": ("土砂龙", "蛮颚龙"),
+    # 黑蚀龙与混沌黑蚀龙在游戏里就显示为「？？？」（种族未公开），照抄
+    "？？？": ("黑蚀龙", "混沌黑蚀龙"),
+    "甲壳种": ("大名盾蟹", "将军镰蟹"),
+    "鱼龙种": ("泥鱼龙",),
+    "两栖种": ("河童蛙",),
+}
+
+# 怪物名 -> 兽种（构建快照时用）
+SPECIES_BY_NAME = {
+    name: species for species, names in MONSTER_SPECIES.items() for name in names
+}
 
 
 def build_trad_simp(mhrice: dict) -> dict:
