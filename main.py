@@ -88,10 +88,12 @@ class MHMaterialPlugin(Star):
             yield event.plain_result(f"查询出错了：{exc}")
             return
 
-        # 纯文本结果（帮助、候选列表、错误提示）
+        # 文本与卡片可以同时存在：认不出输入的实体时，先给一行说明，
+        # 再附一张帮助图片（手机上图片比纯文本清晰得多）。
         if result.text:
             yield event.plain_result(result.text)
-            return
+            if result.card is None:
+                return
 
         if result.card is None:
             yield event.plain_result("没有查到结果。")

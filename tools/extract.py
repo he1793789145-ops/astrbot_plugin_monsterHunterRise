@@ -2039,6 +2039,15 @@ def build_snapshot(
             f"  补入装饰珠配方引用的非素材物品: {len(patched)} 个（{'、'.join(patched)}）"
         )
 
+    # 进度门槛字典（progress_flag -> 中文），解锁条件展示时用
+    progress_labels = build_progress_labels(mhrice)
+    print(f"  进度门槛字典: {len(progress_labels)} 条")
+
+    # 勋章（成就）100 枚
+    achievements = build_achievements(mhrice)
+    award_count = len(achievements.get("awards") or {})
+    print(f"  勋章（成就）: {award_count} 枚")
+
     # 技能效果（总述 + 逐等级）。很小（含文本约 20 KB），直接进快照，
     # 这样 /mh 技能 的卡片能直接给出「这个技能到底做什么」。
     skill_effects = build_skill_effects(mhrice)
@@ -2087,6 +2096,8 @@ def build_snapshot(
             "decorations": equipment["decorations"],
             "deco_index": equipment["deco_index"],
             "skills": skill_effects,
+            "progress_labels": progress_labels,
+            "achievements": achievements,
             "trad_simp": trad_simp,
             "quest_type_labels": QUEST_TYPE_LABELS,
             "rank_labels": RANK_LABELS,
@@ -2141,10 +2152,15 @@ def build_skill_effects(mhrice: dict) -> dict:
                 names.setdefault(int(match.group(1)), text)
 
     # 总述
+    #
+    # 注意大师位那两张表的命名**不一致**（实测）：
+    #   `player_skill_detail_msg_mr` 条目叫 `PlayerSkill_053_02_Detail_MR`（带 _MR）
+    #   `player_skill_explain_msg_mr` 条目叫 `PlayerSkill_200_Explain`（**不带 _MR**）
+    # 按带后缀写正则会让 21 个大师位技能一条总述都取不到（气血、连击、狂龙症【蚀】…）。
     explains: dict[int, str] = {}
     for table, pattern in (
         ("player_skill_explain_msg", r"PlayerSkill_(\d+)_Explain$"),
-        ("player_skill_explain_msg_mr", r"PlayerSkill_(\d+)_Explain_MR$"),
+        ("player_skill_explain_msg_mr", r"PlayerSkill_(\d+)_Explain$"),
     ):
         for entry in (mhrice.get(table) or {}).get("entries") or []:
             match = re.match(pattern, entry.get("name") or "")
@@ -2155,10 +2171,18 @@ def build_skill_effects(mhrice: dict) -> dict:
                 explains.setdefault(int(match.group(1)), text)
 
     # 逐等级（基础表 + 大师位追加表合并）
+    #
+    # `player_skill_detail_msg_mr` 的条目名是**混着两种写法**的（实测）：
+    #   基础技能的追加等级：`PlayerSkill_053_02_Detail_MR`（带 _MR）
+    #   大师位技能的分级：  `PlayerSkill_200_00_Detail`  （**不带 _MR**）
+    # 只认一种写法就会让 21 个大师位技能（气血、连击、狂龙症【蚀】…）没有分级。
+    #
+    # 合并策略是「按等级下标 setdefault」：基础表先写入，大师位表只补空缺，
+    # 这样基础技能已有的等级文案不会被覆盖（不引入回归）。
     levels: dict[int, dict[int, str]] = {}
     for table, pattern in (
         ("player_skill_detail_msg", r"PlayerSkill_(\d+)_(\d+)_Detail$"),
-        ("player_skill_detail_msg_mr", r"PlayerSkill_(\d+)_(\d+)_Detail_MR$"),
+        ("player_skill_detail_msg_mr", r"PlayerSkill_(\d+)_(\d+)_Detail(_MR)?$"),
     ):
         for entry in (mhrice.get(table) or {}).get("entries") or []:
             match = re.match(pattern, entry.get("name") or "")
@@ -2168,7 +2192,7 @@ def build_skill_effects(mhrice: dict) -> dict:
             level_index = int(match.group(2))  # 0 基，显示时 +1
             text = _msg_text(entry)
             if text:
-                levels.setdefault(skill_id, {})[level_index] = text
+                levels.setdefault(skill_id, {}).setdefault(level_index, text)
 
     result: dict[str, dict] = {}
     for skill_id, name in names.items():
@@ -2308,6 +2332,116 @@ MONSTER_SPECIES = {
 SPECIES_BY_NAME = {
     name: species for species, names in MONSTER_SPECIES.items() for name in names
 }
+
+
+def _progress_label(row: dict) -> str:
+    """把 `progress` 表的一行展开成中文门槛描述。
+
+    ## 为什么不能简单写成「村/下位/上位/大师」
+
+    `progress_flag` 不是档位枚举，而是**复合门槛 ID**：一行可同时含
+    村庄进度 / 集会所进度 / 大师进度 / 通关指定任务 / 对话 flag，
+    外加 `progress_hr`（Low / High / HRUnlock）。所以要逐项判断、用「，」连起来。
+
+    `talk_flag` 这类门槛在数据里只有编号、没有文本，只能写成
+    「需完成特定剧情进度」——承认有前置，但不假装知道具体是什么。
+    """
+    parts: list[str] = []
+    master = row.get("mr")
+    if isinstance(master, dict) and isinstance(master.get("MasterRankProgress"), int):
+        parts.append(f"需大师进度 ≥{master['MasterRankProgress']}")
+    hall = row.get("hall")
+    if isinstance(hall, dict) and isinstance(hall.get("HallProgress"), int):
+        parts.append(f"需集会所进度 ≥{hall['HallProgress']}")
+    village = row.get("village")
+    if isinstance(village, dict) and isinstance(village.get("VillageProgress"), int):
+        parts.append(f"需村庄进度 ≥{village['VillageProgress']}")
+    quest = row.get("quest_no")
+    if isinstance(quest, int) and quest > 0:
+        parts.append(f"需通关任务 {quest}")
+    talk = row.get("talk_flag")
+    if isinstance(talk, int) and talk > 0:
+        parts.append("需完成特定剧情进度")
+    if row.get("progress_hr") == "HRUnlock":
+        parts.append("需解锁 HR")
+    elif row.get("progress_hr") == "High" and not parts:
+        # 只有 High 而没有其它项时，说明是「进入上位」这一道坎
+        parts.append("需进入上位")
+    return "，".join(parts)
+
+
+def build_progress_labels(mhrice: dict) -> dict:
+    """`progress_flag` -> 中文门槛描述。
+
+    文件里自带字典表 `progress`（138 行），主键就是 `progress_flag`，
+    所以不需要硬编码任何映射。空描述（即无条件）不入表。
+    """
+    labels: dict[str, str] = {}
+    for row in (mhrice.get("progress") or {}).get("param_list") or []:
+        flag = row.get("progress_flag")
+        if not isinstance(flag, int):
+            continue
+        label = _progress_label(row)
+        if label:
+            labels[str(flag)] = label
+    return labels
+
+
+def build_achievements(mhrice: dict) -> dict:
+    """勋章（= 玩家口中的 Steam 成就）100 枚：名称 + 解锁条件描述。
+
+    ## 为什么取 `award` 而不是 `achievement`
+
+    `achievement` 表（1812 行）是游戏里的**称号**（「新人」「一年级生」
+    「妖狐」「眠狗龙」这类短词），不是成就。`award` 才是勋章：**50 基础 +
+    50 大师 = 100 枚**，与 Steam 版成就数一致。
+
+    `award` 每行只有 `name` / `explain` 两个引用字段，**没有结构化的条件数值**，
+    但描述本身就是完整的条件句（「すべての勲章を…」「マガイマガドを狩猟した証。」），
+    所以直接把描述当条件展示。
+
+    引用规则：`name="N_xx"` → 条目 `GC_Award_N_xx`，先查 `award_name`
+    再查 `award_name_mr`；`explain` 同理 → `GC_Award_E_xx`。
+    """
+
+    def read(table: str) -> dict[str, str]:
+        """把条目名**去掉 `GC_Award_` 前缀**后建索引。
+
+        条目名本身已经带前缀（`GC_Award_N_02` / `GC_Award_E_MR_01`），
+        而 `award.param` 里的引用是 `N_02` / `E_MR_01`。所以必须剥掉前缀再索引——
+        否则会拼成 `GC_Award_GC_Award_N_02`，一条都匹配不上。
+        """
+        out: dict[str, str] = {}
+        for entry in (mhrice.get(table) or {}).get("entries") or []:
+            name = entry.get("name") or ""
+            name = name.removeprefix("GC_Award_")
+            if not name:
+                continue
+            text = _msg_text(entry)
+            if text:
+                out[name] = text
+        return out
+
+    names = {**read("award_name_mr"), **read("award_name")}
+    explains = {**read("award_explain_mr"), **read("award_explain")}
+
+    awards: dict[str, dict] = {}
+    for row in (mhrice.get("award") or {}).get("param") or []:
+        key = row.get("name") or ""
+        explain_key = row.get("explain") or ""
+        if not key or not explain_key:
+            continue
+        name = names.get(key)
+        desc = explains.get(explain_key)
+        if not name or not desc:
+            continue
+        awards[key] = {
+            "name": name,
+            "desc": desc,
+            # 基础 50 枚与大师 50 枚分两套编号（N_xx / N_MR_xx）
+            "kind": "mr" if "_MR_" in key else "base",
+        }
+    return {"awards": awards}
 
 
 def build_trad_simp(mhrice: dict) -> dict:

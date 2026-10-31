@@ -372,6 +372,12 @@ class Snapshot:
         self.deco_index: dict = tables.get("deco_index") or {}
         # 技能效果：{技能名: {"explain": 总述, "levels": [Lv1, Lv2, ...]}}
         self.skills: dict[str, dict] = tables.get("skills") or {}
+        # 勋章（成就）：{键: {"name", "desc", "kind"}}，kind = base / mr
+        self.achievements: dict[str, dict] = (tables.get("achievements") or {}).get(
+            "awards"
+        ) or {}
+        # 进度门槛字典：progress_flag(字符串) -> 中文描述
+        self.progress_labels: dict[str, str] = tables.get("progress_labels") or {}
 
         # 繁→简映射供模块级 _normalize() 使用（它就是为查询服务的）
         global _TRAD_SIMP
@@ -384,6 +390,7 @@ class Snapshot:
         self._weapon_by_name: dict[str, list[str]] = {}
         self._skill_to_decos: dict[str, list[str]] = {}
         self._deco_by_name: dict[str, list[str]] = {}
+        self._ach_by_name: dict[str, list[str]] = {}
         # 派生树的两个方向：父 -> 子（快照只存了 parent，子在这里反推），
         # 以及 系列名 -> 该系列的武器（用户会按「伞鸟枪」这样按系列找）
         self._children: dict[str, list[str]] = {}
@@ -502,6 +509,10 @@ class Snapshot:
             base = _DECO_SLOT_SUFFIX.sub("", name).strip()
             if base and base != name:
                 self._deco_by_name.setdefault(base, []).append(key)
+        for key, award in self.achievements.items():
+            name = (award.get("name") or "").strip()
+            if name:
+                self._ach_by_name.setdefault(name, []).append(key)
 
     # ---- 武器 -----------------------------------------------------------
 
@@ -653,6 +664,40 @@ class Snapshot:
     def skill_effect(self, name: str) -> dict:
         """技能效果：``{"explain": 总述, "levels": [Lv1, Lv2, ...]}``；没有则空 dict。"""
         return self.skills.get(str(name)) or {}
+
+    # ---- 勋章（成就） ---------------------------------------------------
+
+    def achievement(self, key: str) -> dict | None:
+        entry = self.achievements.get(str(key))
+        return {**entry, "key": str(key)} if entry else None
+
+    def search_achievements(self, query: str, limit: int = 20) -> list[Match]:
+        """按勋章名或**条件描述**搜（100 条，直接线性扫描述即可）。"""
+        results = self._search(query, self._ach_by_name, self.achievements, limit)
+        seen = {match.key for match in results}
+        target = _normalize(query)
+        if target:
+            extra: list[Match] = []
+            for key, award in self.achievements.items():
+                if key in seen:
+                    continue
+                if target in _normalize(award.get("desc") or ""):
+                    extra.append(
+                        Match(
+                            key=key,
+                            name=award.get("name") or key,
+                            score=_MATCH_CONTAINS,
+                            rank=0,
+                        )
+                    )
+            results.extend(extra[: max(0, limit - len(results))])
+        return results
+
+    def progress_label(self, flag) -> str:
+        """`progress_flag` -> 中文门槛；无（0）返回空串。"""
+        if flag in (None, 0, "0", "", "None"):
+            return ""
+        return self.progress_labels.get(str(flag), "")
 
     def search_decorations(self, query: str, limit: int = 12) -> list[Match]:
         """按装饰珠名搜索。

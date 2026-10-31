@@ -607,7 +607,15 @@ def handle_quest(snapshot: Snapshot, argument: str) -> CommandResult:
 
 
 def handle_help(snapshot: Snapshot, argument: str) -> CommandResult:
-    return CommandResult(text=render_help(snapshot, argument))
+    """`/mh help` 出图片；`/mh help <指令>` 出该指令的短文本。
+
+    整页帮助必须出图——手机 QQ 是非等宽字体，19 行纯文本会被重排成一团。
+    但指定指令时仍是文本，方便直接复制那条指令。
+    """
+    topic = (argument or "").strip()
+    if not topic:
+        return CommandResult(card=build_help_card(snapshot))
+    return CommandResult(text=render_help(snapshot, topic))
 
 
 # --------------------------------------------------------------------------
@@ -737,6 +745,9 @@ MOTION_LABELS = {"slash": "斩", "strike": "打", "shell": "射"}
 MAX_WEAPON_LIST = 4  # 不带类型时按稀有度降序只列 4 件（A14）
 MAX_WEAPONS_PER_TYPE = 0  # 0 = 不截断（A14/A24：带类型时显示该类型全部）
 MAX_DECO_LIST = 8  # 装饰品列表上限（A24）
+MAX_ACHIEVEMENT_SEARCH = 12  # 成就搜索结果上限
+MAX_ACHIEVEMENT_LIST = 6  # 搜索结果卡里展开几条（每条带描述，占两行）
+MAX_SUGGESTIONS = 3  # 上下文帮助最多给几条建议
 
 
 def _weapon_type_zh(snapshot: Snapshot, weapon: dict) -> str:
@@ -1058,6 +1069,16 @@ def build_weapon_detail_card(snapshot: Snapshot, weapon_key: str) -> Card | None
             )
         )
 
+    # 解锁条件（V1.5.0）：武器可能「生产」一套门槛、「强化」另一套，
+    # 相同文案合并、不同则按系统标注。
+    unlock_rows = _weapon_unlock_rows(snapshot, weapon)
+    if unlock_rows:
+        sections.append(
+            _unlock_section(
+                snapshot, unlock_rows, footer="来自游戏数据的进度/怪物/素材门槛"
+            )
+        )
+
     return Card(
         title=weapon.get("name") or weapon_key,
         sections=sections,
@@ -1122,6 +1143,18 @@ def build_skill_card(snapshot: Snapshot, skill: str, decorations: list[dict]) ->
         recipe = _deco_recipe_text(snapshot, item)
         if recipe:
             lines.append(Line.of((f"　素材：{recipe}", "muted")))
+        # 解锁条件（A17=B）：每颗珠单独一行。
+        # 实测普通珠 244/244 都有至少一条门槛，所以「有没有门槛」没有区分度，
+        # 直接写出来比让用户再去查一次更省事。
+        unlock_rows = _unlock_rows(
+            snapshot,
+            item.get("unlock"),
+            recipe_items=item.get("materials") or [],
+            show_monster=_show_monster_unlock(item.get("kind")),
+        )
+        if unlock_rows:
+            joined = "，".join(detail for _label, detail in unlock_rows)
+            lines.append(Line.of((f"　解锁：{joined}", "muted")))
     sections.append(
         Section(
             title="提供该技能的装饰珠",
@@ -1567,20 +1600,38 @@ def build_decoration_card(snapshot: Snapshot, deco: dict) -> Card:
             )
         )
 
+    sections = [
+        Section(
+            title="所需素材",
+            lines=rows or [Line.of(("源数据里没有这颗珠的配方", "muted"))],
+            glyph="note",
+            footer=(
+                "百龙珠的类别需求只记「评价值」，不记个数"
+                if category.get("name")
+                else ""
+            ),
+        )
+    ]
+
+    # 解锁条件（V1.5.0）。三个字段并列，逐条列出。
+    unlock_rows = _unlock_rows(
+        snapshot,
+        deco.get("unlock"),
+        recipe_items=deco.get("materials") or [],
+        show_monster=_show_monster_unlock(deco.get("kind")),
+    )
+    if unlock_rows:
+        sections.append(
+            _unlock_section(
+                snapshot,
+                unlock_rows,
+                footer="来自游戏数据的进度/怪物/素材门槛",
+            )
+        )
+
     return Card(
         title=deco.get("name") or "",
-        sections=[
-            Section(
-                title="所需素材",
-                lines=rows or [Line.of(("源数据里没有这颗珠的配方", "muted"))],
-                glyph="note",
-                footer=(
-                    "百龙珠的类别需求只记「评价值」，不记个数"
-                    if category.get("name")
-                    else ""
-                ),
-            )
-        ],
+        sections=sections,
         metrics=metrics,
         badge="百龙装饰品" if deco.get("kind") == "rampage" else "装饰品",
         footnote=_footnote(snapshot),
@@ -1655,6 +1706,351 @@ def handle_decoration(snapshot: Snapshot, argument: str) -> CommandResult:
 
 
 # --------------------------------------------------------------------------
+# V1.5.0：解锁条件 / 勋章（成就）/ 帮助系统
+# --------------------------------------------------------------------------
+
+# 上下文帮助里只接受「精确 / 前缀 / 包含 / 归一化」这几档匹配（0–3），
+# 不接受编辑距离模糊匹配——否则「阿巴阿巴」也会被硬凑出一条建议。
+_SUGGEST_MAX_SCORE = 3
+
+# 是否显示「需狩猎 X」这一条门槛（A18 = 只对百龙珠显示）。
+#
+# 普通装饰珠的 `enemy_flag` 有一小簇异常：120 条里只有 60 条的配方素材含该怪物名，
+# 且有 10 条指向雷神龙、而配方用的是**风神龙**素材（两只是成对古龙），
+# 部分低稀有度珠子还被标了终盘古龙——无法排除是上游数据错。所以普通珠不显示。
+#
+# 百龙珠的同一字段已逐条与外部图鉴核对（痛恨龙珠 = 土砂龙 + 大师进度 ≥1，完全一致），
+# 所以照实显示。
+_MONSTER_UNLOCK_KINDS = {"normal": False, "rampage": True}
+
+
+def _show_monster_unlock(kind: str | None) -> bool:
+    return _MONSTER_UNLOCK_KINDS.get(kind or "normal", True)
+
+
+def _monster_name_of(snapshot: Snapshot, em: int) -> str:
+    entry = snapshot.monsters.get(str(em))
+    if entry:
+        return entry.get("name") or ""
+    entry = snapshot.small_monsters.get(f"-{em}")
+    return (entry or {}).get("name") or ""
+
+
+def _unlock_rows(
+    snapshot: Snapshot,
+    unlock: dict | None,
+    *,
+    recipe_items=None,
+    show_monster: bool = True,
+) -> list[tuple[str, str]]:
+    """把 `unlock` 字典展开成 ``[(标签, 文本)]``。
+
+    ## 三个字段是**并列**的，不是互斥的
+
+    实测有「进度 + 素材」同时成立的对象，所以逐项判断、各自成行。
+
+    ## `item_flag` 的两种语义要分开写
+
+    它指向的素材**如果也在配方里**（装饰品 66/66 都是），说明是「入手该素材
+    后才解锁」——素材本身既是触发器又是消耗品，不能重复算成额外需求。
+    如果**不在配方里**（防具里有 19 行如此），那才是真的「另需」。
+    """
+    rows: list[tuple[str, str]] = []
+    if not unlock:
+        return rows
+
+    progress = snapshot.progress_label(unlock.get("p"))
+    if progress:
+        rows.append(("进度", progress))
+
+    if show_monster:
+        em = unlock.get("e")
+        name = _monster_name_of(snapshot, em) if isinstance(em, int) else ""
+        if name:
+            rows.append(("怪物", f"需狩猎 {name}"))
+
+    item_id = unlock.get("i")
+    if isinstance(item_id, int):
+        name = _item_name(snapshot, {"item_id": str(item_id)})
+        in_recipe = recipe_items is not None and any(
+            str(pair[0]) == str(item_id) for pair in recipe_items
+        )
+        if recipe_items is None or in_recipe:
+            rows.append(("素材", f"入手 {name} 后解锁"))
+        else:
+            rows.append(("素材", f"另需 {name}"))
+    return rows
+
+
+def _unlock_section(
+    snapshot: Snapshot,
+    rows: list[tuple[str, str]],
+    *,
+    footer: str = "",
+) -> Section:
+    return Section(
+        title="解锁条件",
+        lines=[Line.of((label, "tag"), (text, "body")) for label, text in rows],
+        glyph="note",
+        footer=footer,
+    )
+
+
+def _weapon_unlock_rows(snapshot: Snapshot, weapon: dict) -> list[tuple[str, str]]:
+    """武器：把各配方系统的解锁门槛合并去重。
+
+    同一把武器可能「生产」有一套门槛、「强化」又是另一套；相同文案只留一条，
+    不同的按 `[系统]` 前缀区分。
+    """
+    merged: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for system, recipe in (weapon.get("recipes") or {}).items():
+        if not isinstance(recipe, dict):
+            continue
+        unlock = recipe.get("unlock")
+        if not unlock:
+            continue
+        rows = _unlock_rows(
+            snapshot, unlock, recipe_items=recipe.get("materials") or []
+        )
+        label = SYSTEM_LABELS.get(system, system)
+        for tag, text in rows:
+            fingerprint = f"{tag}|{text}"
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            merged.append((f"{label}·{tag}", text))
+    return merged
+
+
+def build_achievement_list_card(snapshot: Snapshot, matches: list) -> Card:
+    """勋章搜索结果卡：每条给出名称 + 解锁条件描述。"""
+    lines: list[Line] = []
+    for match in matches[:MAX_ACHIEVEMENT_LIST]:
+        award = snapshot.achievement(match.key) or {}
+        lines.append(Line.of((award.get("name") or match.name, "body")))
+        desc = (award.get("desc") or "").strip()
+        if desc:
+            lines.append(Line.of((f"　{desc}", "muted")))
+    return Card(
+        title="成就",
+        sections=[
+            Section(
+                title="匹配的勋章",
+                lines=lines,
+                glyph="skill",
+                count=f"{len(matches)} 枚",
+                footer="条件是游戏内原文；勋章即 Steam 成就，共 100 枚",
+            )
+        ],
+        metrics=[("匹配", f"{len(matches)} 枚")],
+        badge="成就",
+        footnote=_footnote(snapshot),
+    )
+
+
+def build_achievement_overview_card(snapshot: Snapshot) -> Card:
+    """勋章总览：只列名称（两列），分「基础 / 大师」两组。
+
+    100 枚带上描述要 6000px 以上，所以总览只给名称，详情靠关键词搜。
+    """
+    sections: list[Section] = []
+    for kind, title in (("base", "基础勋章"), ("mr", "大师勋章")):
+        names = [
+            award.get("name") or ""
+            for award in snapshot.achievements.values()
+            if award.get("kind") == kind and award.get("name")
+        ]
+        if not names:
+            continue
+        sections.append(
+            Section(
+                title=title,
+                lines=[Line.of((name, "body")) for name in sorted(names)],
+                glyph="skill",
+                count=f"{len(names)} 枚",
+                kind="grid",
+            )
+        )
+    sections.append(
+        Section(
+            title="怎么查条件",
+            lines=[
+                Line.of(("/mh 成就 <关键词>", "tag"), ("按名称或条件文本搜索", "body")),
+                Line.of(
+                    ("例", "tag"),
+                    ("/mh 成就 护符　/mh 成就 百龙　/mh 成就 讨伐", "body"),
+                ),
+            ],
+            glyph="note",
+            footer="勋章 = Steam 成就，共 100 枚；游戏里的「称号」不在此列",
+        )
+    )
+    return Card(
+        title="成就",
+        sections=sections,
+        metrics=[("勋章", f"{len(snapshot.achievements)} 枚")],
+        badge="成就",
+        footnote=_footnote(snapshot),
+    )
+
+
+def handle_achievement(snapshot: Snapshot, argument: str) -> CommandResult:
+    """`/mh 成就 [关键词]` —— 勋章（Steam 成就）查询。"""
+    query = (argument or "").strip()
+    if not query:
+        return CommandResult(card=build_achievement_overview_card(snapshot))
+
+    matches = snapshot.search_achievements(query, limit=MAX_ACHIEVEMENT_SEARCH)
+    if not matches:
+        # 用户很可能是把游戏里的「称号」当成成就了（称号 1788 条不在本指令范围内），
+        # 所以这里把范围说明白，而不是只回「没找到」。
+        return CommandResult(
+            text=(
+                f"没有匹配「{query}」的勋章。\n"
+                "本指令只覆盖 100 枚勋章（Steam 成就）；"
+                "游戏里的「称号」（如「妖狐」「空战」）不在这个范围。\n\n"
+                "全部勋章：/mh 成就"
+            )
+        )
+    return CommandResult(card=build_achievement_list_card(snapshot, matches))
+
+
+def build_help_card(snapshot: Snapshot, topic: str = "") -> Card:
+    """整页帮助卡（图片）。
+
+    ## 为什么要出图
+
+    手机 QQ 是非等宽字体，纯文本里任何对齐/缩进都会被字体重排掉，
+    19 行的帮助在手机上会糊成一块。图片在所有端上都是同一份排版。
+    但图片里的指令**不能复制**，所以「针对本次输入的建议」仍然用文本。
+    """
+    sections: list[Section] = []
+    for title, names in HELP_GROUPS:
+        group = [
+            COMMAND_INDEX[name.lower()]
+            for name in names
+            if name.lower() in COMMAND_INDEX
+        ]
+        if not group:
+            continue
+        lines: list[Line] = []
+        for command in group:
+            lines.append(Line.of((command.usage, "body")))
+            lines.append(Line.of((f"　{command.summary}", "muted")))
+        sections.append(Section(title=title, lines=lines, glyph="note"))
+
+    stats = snapshot.stats()
+    sections.append(
+        Section(
+            title="看示例",
+            lines=[
+                Line.of(("/mh help <指令>", "tag"), ("显示该指令的用法与示例", "body")),
+                Line.of(
+                    ("例", "tag"),
+                    ("/mh help 武器　/mh help 肉质", "body"),
+                ),
+            ],
+            glyph="note",
+            footer=(
+                f"数据：{stats['materials']} 素材 / {stats['monsters']} 怪物 / "
+                f"{stats['quests']} 任务"
+            ),
+        )
+    )
+    return Card(
+        title="可用指令",
+        sections=sections,
+        metrics=[("指令", f"{len(COMMANDS)} 条")],
+        badge="帮助",
+        footnote=_footnote(snapshot),
+    )
+
+
+def _contextual_suggestions(snapshot: Snapshot, text: str) -> list[str]:
+    """把输入当作实体名，给出具体指令建议（最多 3 条）。
+
+    这是「帮助优化」的核心：用户发 `/mh 怨虎龙` 时，与其甩一整页指令表，
+    不如直接告诉他 `/mh 怪物 怨虎龙` 和 `/mh 肉质 怨虎龙`。
+
+    只接受 `_SUGGEST_MAX_SCORE` 以内的匹配（精确/前缀/包含/归一化）；
+    编辑距离模糊匹配不参与——否则会把不相干的词硬凑成建议。
+    """
+    query = (text or "").strip()
+    if not query:
+        return []
+
+    def best(matches):
+        for match in matches:
+            if match.ambiguous:
+                continue
+            if match.score <= _SUGGEST_MAX_SCORE:
+                return match
+        return None
+
+    # (优先级, 分数, 建议列表)；优先级用来在同分时决定取舍
+    found: list[tuple[int, int, list[str]]] = []
+
+    monster = best(snapshot.search_monsters(query, limit=6))
+    if monster:
+        found.append(
+            (
+                0,
+                monster.score,
+                [f"/mh 怪物 {monster.name}", f"/mh 肉质 {monster.name}"],
+            )
+        )
+
+    material = best(snapshot.search_materials(query, limit=6))
+    if material:
+        found.append(
+            (
+                1,
+                material.score,
+                [
+                    f"/mh 素材 {material.name}",
+                    f"/mh 武器 {material.name}",
+                    f"/mh 技能 {material.name}",
+                ],
+            )
+        )
+
+    decoration = best(snapshot.search_decorations(query, limit=6))
+    if decoration:
+        found.append((2, decoration.score, [f"/mh 装饰品 {decoration.name}"]))
+
+    weapon = best(snapshot.search_weapons(query, limit=6))
+    if weapon:
+        found.append((3, weapon.score, [f"/mh 武器 {weapon.name}"]))
+    elif snapshot.series_matching(_split_series_query(query)[0]):
+        # 「伞鸟枪」这类是**系列 + 类型**查询，不是武器名，武器索引里搜不到。
+        # 要先按 handle_weapon 那套逻辑把类型后缀拆掉，再去匹配系列。
+        found.append((3, 0, [f"/mh 武器 {query}"]))
+
+    skill = best(snapshot.search_skills(query, limit=6))
+    if skill:
+        found.append((4, skill.score, [f"/mh 技能 {skill.name}"]))
+
+    quest = best(snapshot.search_quests(query, limit=6))
+    if quest:
+        found.append((5, quest.score, [f"/mh 任务 {quest.name}"]))
+
+    award = best(snapshot.search_achievements(query, limit=6))
+    if award:
+        found.append((6, award.score, [f"/mh 成就 {award.name}"]))
+
+    found.sort(key=lambda item: (item[1], item[0]))
+    suggestions: list[str] = []
+    for _priority, _score, items in found:
+        for item in items:
+            if item not in suggestions:
+                suggestions.append(item)
+            if len(suggestions) >= MAX_SUGGESTIONS:
+                return suggestions
+    return suggestions
+
+
+# --------------------------------------------------------------------------
 # 命令表
 # --------------------------------------------------------------------------
 
@@ -1709,9 +2105,16 @@ COMMANDS: list[Command] = [
     Command(
         name="装饰品",
         usage="/mh 装饰品 <珠名>",
-        summary="单颗装饰珠的孔位、技能与所需素材",
+        summary="单颗装饰珠的孔位、技能、所需素材与解锁条件",
         handler=handle_decoration,
         examples=("/mh 装饰品 攻击珠", "/mh 装饰品 痛恨龙珠"),
+    ),
+    Command(
+        name="成就",
+        usage="/mh 成就 [关键词]",
+        summary="勋章（Steam 成就）的解锁条件；不带参数看全部 100 枚",
+        handler=handle_achievement,
+        examples=("/mh 成就", "/mh 成就 护符", "/mh 成就 百龙"),
     ),
     Command(
         name="help",
@@ -1730,7 +2133,7 @@ COMMAND_INDEX: dict[str, Command] = {
 HELP_GROUPS = (
     ("查素材与怪物", ("素材", "怪物", "肉质", "任务")),
     ("查装备", ("武器", "技能", "装饰品")),
-    ("其它", ("help",)),
+    ("查成就与帮助", ("成就", "help")),
 )
 
 HELP_TITLE = "怪物猎人素材查询 —— 可用指令"
@@ -1878,9 +2281,18 @@ def dispatch(snapshot: Snapshot, argument_text: str) -> CommandResult:
     rest = parts[1].strip() if len(parts) > 1 else ""
 
     command = COMMAND_INDEX.get(name)
-    if command is None:
-        # 未知子命令：提示并附上帮助，比单纯报错有用
-        return CommandResult(
-            text=f"未知的子命令「{parts[0]}」。\n\n" + render_help(snapshot)
-        )
-    return command.handler(snapshot, rest)
+    if command is not None:
+        return command.handler(snapshot, rest)
+
+    # 认不出子命令时，先看这段文字是不是某个实体名（怪物 / 素材 / 武器 …）。
+    # 是的话直接给出具体指令——比甩一整页帮助有用得多，手机上也读得完。
+    suggestions = _contextual_suggestions(snapshot, text)
+    if suggestions:
+        lines = [f"「{text}」不是指令。你是想查："]
+        lines.extend(f"· {item}" for item in suggestions)
+        lines.append("")
+        lines.append("全部指令：/mh help")
+        return CommandResult(text="\n".join(lines))
+
+    # 完全认不出：一行说明 + 帮助图片（图片在手机端才读得清）
+    return CommandResult(text=f"没认出「{text}」。", card=build_help_card(snapshot))

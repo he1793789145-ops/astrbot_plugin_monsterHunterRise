@@ -331,6 +331,45 @@ def _weapon_name_index(type_table) -> dict[int, dict]:
     return index
 
 
+def _unlock_of(row) -> dict:
+    """解锁门槛：``{"p": 进度flag, "e": Em, "i": 素材id}``，没有的键不出现。
+
+    ## 三个要点（都是实测踩出来的）
+
+    1. **三个字段并不互斥**：防具里有 125 行同时带「进度 + 素材」两个门槛，
+       所以三个都独立判断，**不能写成 if/elif**。
+    2. **空值有三种形态**：``"None"``、``"Null"``、``0``（``Em`` 的哨兵），
+       统一当「无」。少处理一种就会显示成「需解锁 None」。
+    3. **武器的字段嵌在 `row["base"]` 里**，不在行顶层——只看顶层会误判成
+       「武器没有解锁条件」。
+    """
+    if not isinstance(row, dict):
+        return {}
+    base = row.get("base")
+    fields = base if isinstance(base, dict) else row
+
+    out: dict = {}
+    flag = fields.get("progress_flag")
+    if isinstance(flag, int) and flag != 0:
+        out["p"] = flag
+    enemy = fields.get("enemy_flag")
+    if isinstance(enemy, dict):
+        em = enemy.get("Em")
+        if isinstance(em, int) and em != 0:
+            out["e"] = em
+        else:
+            ems = enemy.get("Ems")
+            if isinstance(ems, int) and ems != 0:
+                # 小动物：快照里以负键存（-n）
+                out["es"] = ems
+    item = fields.get("item_flag")
+    if isinstance(item, dict):
+        value = item.get("Normal")
+        if isinstance(value, int) and value > 0:
+            out["i"] = value
+    return out
+
+
 def _weapon_recipes(type_table, tag, cat_names) -> dict[int, dict]:
     """三套配方：``{武器 id: {"product": {...}, "process": {...}, "change": {...}}}``。"""
     out: dict[int, dict] = collections.defaultdict(dict)
@@ -348,6 +387,11 @@ def _weapon_recipes(type_table, tag, cat_names) -> dict[int, dict]:
             entry["materials"] = _dedupe_pairs(entry["materials"] + materials)
             if entry["category"] is None and category is not None:
                 entry["category"] = category
+            # 解锁门槛按「配方系统」分别记录：这把武器可能生产有一套门槛、
+            # 强化又是另一套。展示时按系统去重即可。
+            unlock = _unlock_of(row)
+            if unlock and "unlock" not in entry:
+                entry["unlock"] = unlock
     return out
 
 
@@ -632,6 +676,8 @@ def build_decorations(mhrice: dict):
                 (product or {}).get("item_id_list"),
                 (product or {}).get("item_num_list"),
             ),
+            # 解锁门槛（进度 / 指定怪物 / 指定素材）
+            "unlock": _unlock_of(product),
         }
 
     # --- 百龙装饰珠（技能名以外部映射表为准：本地 hyakuryu_skill_name_msg 只到 258） ---
@@ -668,6 +714,7 @@ def build_decorations(mhrice: dict):
             # 所以不要按「数量」去理解 point
             # （按武器那边的约定会落成 ×0）。
             "category": _deco_category(product, cat_names_mr),
+            "unlock": _unlock_of(product),
         }
 
     # --- 反查 ---
