@@ -1387,6 +1387,9 @@ def build_gathering_nodes(mhrice: dict, map_names: dict) -> dict:
                 -r["chance"],
             )
         )
+
+    # 键保持 **int**：`build_snapshot` 里 `items_table` 的键就是 int，
+    # 两边一致才能对上。不要在这里转 str——转了会让采集点数据整片变成空列表。
     return result
 
 
@@ -1658,10 +1661,26 @@ def build_quest_names(mhrice: dict) -> dict:
 
 
 def build_quest_rewards(mhrice: dict, items: dict) -> dict:
-    """quest_no -> 奖励条目列表。
+    """quest_no -> 结算奖励列表（按来源分类）。
 
-    quest_data_for_reward[_mr] 只给奖励表编号，真正的物品在
-    reward_id_lot_table[_mr] 里。
+    ## 数据链路
+
+    `quest_data_for_reward[_mr]` 一行给的是**几个奖励表号**，
+    真正的物品在 `reward_id_lot_table[_mr]`（`item_id_list` / `num_list` /
+    `probability_list` 三个并列数组，`lot_rule` 说明抽取规则）。
+
+    四类表号各有含义，全部都要取（早期只取了 `common_material` 一类）：
+
+    * `common_material_reward_table_index` —— 素材报酬（每行都有）
+    * `additional_target_reward_table_index` —— **主要目标报酬**
+    * `additional_quest_reward_table_index` —— 附加任务报酬（最多 4 个）
+    * `cloth_ticket_index` —— 布票/兑换券类
+
+    ## 曾经的 bug：键类型不一致导致全部静默丢失
+
+    `items` 的键是 `str(item_id)`，而 `_item_id_at()` 返回 **int**，
+    于是 `items.get(item_id)` 永远 miss，701 个任务的 `rewards` 全被丢光，
+    且没有任何报错。这里统一转成字符串再查。
     """
     lot_tables: dict[int, dict] = {}
     for table in ("reward_id_lot_table", "reward_id_lot_table_mr"):
@@ -1670,48 +1689,62 @@ def build_quest_rewards(mhrice: dict, items: dict) -> dict:
             if isinstance(table_id, int):
                 lot_tables[table_id] = row
 
+    # 表号字段 -> 展示用的分类标签
+    field_sources = (
+        ("common_material_reward_table_index", "素材"),
+        ("additional_target_reward_table_index", "主要目标"),
+        ("additional_quest_reward_table_index", "附加任务"),
+        ("cloth_ticket_index", "兑换券"),
+    )
+
     rewards: dict[int, list] = {}
     for table in ("quest_data_for_reward", "quest_data_for_reward_mr"):
         for row in unwrap(mhrice.get(table)):
             quest_no = row.get("quest_numer")
             if not isinstance(quest_no, int):
                 continue
-            collected = []
-            # 主奖励表 + 若干附加奖励表
-            indexes = [row.get("common_material_reward_table_index")]
-            add = row.get("additional_quest_reward_table_index")
-            if isinstance(add, list):
-                indexes.extend(add)
-            for table_id in indexes:
-                lot = lot_tables.get(table_id)
-                if not lot:
-                    continue
-                id_list = lot.get("item_id_list") or []
-                num_list = lot.get("num_list") or []
-                prob_list = lot.get("probability_list") or []
-                for index in range(len(id_list)):
-                    item_id = _item_id_at(id_list, index)
-                    if item_id is None:
+            # 同一 quest_no 可能在基础表与 MR 表各有一行，合并而不是覆盖
+            collected = rewards.setdefault(quest_no, [])
+            seen = {(entry["item_id"], entry["source"]) for entry in collected}
+            for field, label in field_sources:
+                raw = row.get(field)
+                indexes = raw if isinstance(raw, list) else [raw]
+                for table_id in indexes:
+                    lot = lot_tables.get(table_id)
+                    if not lot:
                         continue
-                    chance = prob_list[index] if index < len(prob_list) else 0
-                    if not isinstance(chance, (int, float)) or chance <= 0:
-                        continue
-                    item = items.get(item_id)
-                    if not item:
-                        continue
-                    collected.append(
-                        {
-                            "item_id": item_id,
-                            "name": item["name"],
-                            "rarity": item["rarity"],
-                            "quantity": int(num_list[index] or 0)
-                            if index < len(num_list)
-                            else 0,
-                            "chance": float(chance),
-                        }
-                    )
-            if collected:
-                rewards[quest_no] = collected
+                    id_list = lot.get("item_id_list") or []
+                    num_list = lot.get("num_list") or []
+                    prob_list = lot.get("probability_list") or []
+                    for index in range(len(id_list)):
+                        item_id = _item_id_at(id_list, index)
+                        if item_id is None:
+                            continue
+                        chance = prob_list[index] if index < len(prob_list) else 0
+                        if not isinstance(chance, (int, float)) or chance <= 0:
+                            continue
+                        # items 的键是字符串，item_id 是 int —— 必须转
+                        item = items.get(str(item_id))
+                        if not item:
+                            continue
+                        if (item_id, label) in seen:
+                            continue
+                        seen.add((item_id, label))
+                        collected.append(
+                            {
+                                "item_id": item_id,
+                                "name": item["name"],
+                                "rarity": item["rarity"],
+                                "quantity": int(num_list[index] or 0)
+                                if index < len(num_list)
+                                else 0,
+                                "chance": float(chance),
+                                "source": label,
+                                "lot_rule": lot.get("lot_rule") or "",
+                            }
+                        )
+            if not collected:
+                rewards.pop(quest_no, None)
     return rewards
 
 
@@ -1841,7 +1874,12 @@ def build_snapshot(
     part_names = build_part_names(mhrice)
     print(f"  部位名表: {len(part_names)} 只怪物")
 
-    rewards = build_quest_rewards(mhrice, items_table)
+    # `items_table` 的键是 int，而 `build_quest_rewards` 里按 `items.get(str(id))` 查
+    # （快照里的 items 是 str 键）。传 int 键的字典会让 701 个任务的奖励全部为空，
+    # 且不报任何错——所以这里显式转一次。
+    rewards = build_quest_rewards(
+        mhrice, {str(item_id): item for item_id, item in items_table.items()}
+    )
     print(f"  含奖励的任务: {len(rewards)}")
 
     sources, monster_drops = build_drops(mhrice, items_table, part_names)
@@ -1896,7 +1934,14 @@ def build_snapshot(
     # 结果把只在野外采集的素材（温暖的毛皮、野猪的毛皮…）整条丢掉了，
     # 用户查询时得到「没有找到」，而不是「这个素材没有掉落记录」。
     # 查不到来源是数据事实，应该照实展示，不该表现为「这个素材不存在」。
-    MATERIAL_TYPES = {"Material", "OffcutsMaterial"}
+    # 收进来的物品类型。
+    #
+    # `PayOff`（结算道具，108 个）与 `CarryPayOff`（可搬运的结算道具，19 个）
+    # 必须收：它们是**任务结算时给出的战利品**（铋七彩石、特产菇、漂亮的尻子玉…），
+    # 玩家会用 `/mh 素材 铋七彩石` 来查。早期只收 Material/OffcutsMaterial，
+    # 于是这 127 个道具一律回「没有找到名为「铋七彩石」的素材」——它们不是不存在，
+    # 而是被类型过滤挡在快照之外。
+    MATERIAL_TYPES = {"Material", "OffcutsMaterial", "PayOff", "CarryPayOff"}
     # 掉落记录里出现过的物品 id —— 即使不是「素材」类型也必须进表。
     # 踩过的坑：小动物会掉结算道具（丸鸟蛋 type=CarryPayOff）和消耗品
     # （生肉、药草、怪物体液），这些被类型过滤挡掉后，掉落记录指向一个

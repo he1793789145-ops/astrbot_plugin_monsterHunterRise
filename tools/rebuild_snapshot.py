@@ -101,10 +101,14 @@ def verify(path: Path, skip_fetch: bool = False) -> bool:
         if d.get("kind") == "parts_break_reward"
     ]
     leaked = sum(1 for label in part_labels if japanese.search(label))
+    # V1.5.1：结算奖励也曾因键类型不一致整片变空，这里一并守住
+    quests = tables.get("quests") or []
+    with_rewards = sum(1 for q in quests if q.get("rewards"))
     checks = [
         # 野外采集点与傀异调查报酬都来自游戏本体数据，不联网。
         # `item_pop_lot` 覆盖 180 个物品，但快照只收素材类，实测约 82 个。
         ("野外采集点（含节点）", with_nodes, 75),
+        ("任务结算奖励", with_rewards, 600),
         ("部位破坏/剥取细分", with_part, 900),
         ("傀异调查报酬", with_anomaly, 50),
         # V1.3.0：弱点汇总。肉质表覆盖全部大型怪，实测 78/78。

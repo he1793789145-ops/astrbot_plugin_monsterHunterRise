@@ -19,6 +19,9 @@ MAX_MONSTERS = 8
 MAX_QUESTS = 5
 MAX_GATHERING_MAPS = 6
 MAX_GATHERING_PER_MAP = 4
+# 结算奖励：每类来源最多列几条（四类分开列，避免主要目标被素材报酬淹没）
+MAX_REWARDS_PER_SOURCE = 8
+REWARD_SOURCE_ORDER = ("主要目标", "附加任务", "兑换券", "素材")
 # 怪物卡：一个素材一个方块
 MAX_MATERIALS_PER_MONSTER = 10
 MAX_ENTRIES_PER_MATERIAL = 5
@@ -478,27 +481,57 @@ def build_quest_card(snapshot: Snapshot, quest: QuestInfo) -> Card:
         sections.append(Section(title="出场怪物", lines=lines))
 
     if quest.rewards:
-        lines = []
-        # 按概率降序，稀有素材高亮
-        for reward in sorted(quest.rewards, key=lambda r: -float(r.get("chance") or 0))[
-            :20
-        ]:
-            style = "accent" if int(reward.get("rarity") or 0) >= 7 else "body"
-            lines.append(
-                Line.of(
-                    (reward.get("name") or "", style),
-                    (f"  {reward.get('quantity') or 0}个 ", "body"),
-                    (f"{_fmt_chance(reward.get('chance'))}", "chance"),
+        # 四类来源分开列（素材 / 主要目标 / 附加任务 / 兑换券）。
+        # 混在一起时「主要目标」的稀有素材会被素材报酬淹没，而它恰恰是最该看到的。
+        grouped: dict[str, list[dict]] = {}
+        for reward in quest.rewards:
+            grouped.setdefault(reward.get("source") or "素材", []).append(reward)
+        for source in REWARD_SOURCE_ORDER:
+            items = grouped.pop(source, None)
+            if not items:
+                continue
+            lines = []
+            for reward in sorted(items, key=lambda r: -float(r.get("chance") or 0))[
+                :MAX_REWARDS_PER_SOURCE
+            ]:
+                style = "accent" if int(reward.get("rarity") or 0) >= 7 else "body"
+                lines.append(
+                    Line.of(
+                        (reward.get("name") or "", style),
+                        (f"  {reward.get('quantity') or 0}个 ", "body"),
+                        (f"{_fmt_chance(reward.get('chance'))}", "chance"),
+                    )
+                )
+            hidden = len(items) - len(lines)
+            # 只有一类来源时不加后缀（避免「结算奖励·素材」这种冗余标题）
+            multi = len({r.get("source") or "素材" for r in quest.rewards}) > 1
+            sections.append(
+                Section(
+                    title=f"结算奖励·{source}" if multi else "结算奖励",
+                    lines=lines,
+                    footer=(
+                        f"共 {len(items)} 项，另有 {hidden} 项未列出"
+                        if hidden > 0
+                        else f"共 {len(items)} 项"
+                    ),
                 )
             )
-        hidden = len(quest.rewards) - 20
-        sections.append(
-            Section(
-                title="结算奖励",
-                lines=lines,
-                footer=f"另有 {hidden} 项" if hidden > 0 else "",
+        # 未列入已知顺序的来源（理论上不会有，但别静默丢）
+        for source, items in grouped.items():
+            sections.append(
+                Section(
+                    title=f"结算奖励·{source}",
+                    lines=[
+                        Line.of(
+                            (reward.get("name") or "", "body"),
+                            (f"  {reward.get('quantity') or 0}个 ", "body"),
+                            (f"{_fmt_chance(reward.get('chance'))}", "chance"),
+                        )
+                        for reward in items[:MAX_REWARDS_PER_SOURCE]
+                    ],
+                    count=f"{len(items)} 项",
+                )
             )
-        )
     else:
         sections.append(
             Section(
@@ -955,7 +988,8 @@ def build_weapon_detail_card(snapshot: Snapshot, weapon_key: str) -> Card | None
     element = weapon.get("element") or {}
     element_text = "—"
     if element.get("type") and element.get("type") != "None":
-        element_text = f"{ELEMENT_LABELS.get(element['type'], element['type'])} {element.get('val') or 0}"
+        label = ELEMENT_LABELS.get(element["type"], element["type"])
+        element_text = f"{label} {element.get('val') or 0}"
 
     metrics = [
         ("攻击", str(weapon.get("atk") if weapon.get("atk") is not None else "—")),
