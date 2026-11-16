@@ -28,6 +28,29 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# 卡片图片写在系统临时目录里，宿主需要读到文件才能发送，所以不能渲染完就删。
+# 但一直不删会无限累积，这里只保留最近的若干张，更早的清掉。
+CARD_CACHE_DIR = Path(tempfile.gettempdir()) / "mh_material_cards"
+KEEP_CARD_FILES = 40
+
+
+def _prune_card_files(keep: int = KEEP_CARD_FILES) -> None:
+    """删除卡片缓存目录里较早的图片，只保留最近 ``keep`` 张。"""
+    try:
+        files = [p for p in CARD_CACHE_DIR.glob("*.png") if p.is_file()]
+        if len(files) <= keep:
+            return
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for stale in files[keep:]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    except OSError:
+        # 清理失败不影响本次渲染
+        pass
+
+
 from PIL import Image, ImageDraw, ImageFont
 
 # 渲染后端：png = 本地 PIL 绘制；html = AstrBot 官方文转图服务
@@ -522,13 +545,13 @@ class CardRenderer:
             self._draw_footnote(canvas, card.footnote, cursor + 6)
 
         image = canvas.finish()
-        out_dir = Path(tempfile.gettempdir()) / "mh_material_cards"
-        out_dir.mkdir(parents=True, exist_ok=True)
+        CARD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         out_path = (
-            out_dir
+            CARD_CACHE_DIR
             / f"mh_{abs(hash((card.title, card.subtitle, len(card.sections))))}.png"
         )
         image.save(out_path, "PNG")
+        _prune_card_files()
         return str(out_path)
 
     # ---- 各部分 ---------------------------------------------------------
@@ -959,13 +982,13 @@ class LedgerRenderer:
         canvas.crop_to(cursor + MARGIN)
 
         image = canvas.finish()
-        out_dir = Path(tempfile.gettempdir()) / "mh_material_cards"
-        out_dir.mkdir(parents=True, exist_ok=True)
+        CARD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         out_path = (
-            out_dir
+            CARD_CACHE_DIR
             / f"mh_{abs(hash((card.title, card.subtitle, len(card.sections))))}.png"
         )
         image.save(out_path, "PNG")
+        _prune_card_files()
         return str(out_path)
 
     # ---- 报头 -----------------------------------------------------------

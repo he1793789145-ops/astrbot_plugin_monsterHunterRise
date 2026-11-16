@@ -22,6 +22,12 @@ PLUGIN_NAME = PLUGIN_ROOT.name
 # 然后用包名 import，而不是把插件目录本身加进 sys.path。
 sys.path.insert(0, str(PLUGIN_ROOT.parent))
 
+# AstrBot 源码树（如果本地有）：main.py 依赖它的 API 模块，
+# 有这份源码就能顺便把平台适配层也自测一遍；没有则跳过那部分。
+_ASTRBOT_SRC = PLUGIN_ROOT.parent / "_ab_src"
+if _ASTRBOT_SRC.is_dir():
+    sys.path.insert(0, str(_ASTRBOT_SRC))
+
 from importlib import import_module
 
 _pkg = import_module(PLUGIN_NAME)
@@ -183,6 +189,111 @@ REQUIRED_SECTIONS = {
 }
 
 
+def check_platform_layer() -> int:
+    """平台适配层自测：参数解析、平台判定、卡片缓存清理。
+
+    这部分要 import main.py，而 main.py 依赖 AstrBot 的 API 模块。
+    没有 AstrBot 的机器上会跳过（并在输出里说明），不算失败。
+    """
+    print("===== 平台适配层 =====")
+    try:
+        main = import_module(f"{PLUGIN_NAME}.main")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [跳过] 无法导入 main.py（{type(exc).__name__}: {exc}）")
+        print("         装好 AstrBot 或把其源码目录加入 sys.path 后才会检查。\n")
+        return 0
+
+    failures = 0
+
+    print(f"  官方平台名：{sorted(main.OFFICIAL_PLATFORMS)}")
+    for platform, expected in [
+        ("aiocqhttp", False),
+        ("qq_official", True),
+        ("qq_official_webhook", True),
+    ]:
+        got = main._platform_name_to_official(platform)
+        if got != expected:
+            print(f"  [失败] 平台判定 {platform} → {got}（期望 {expected}）")
+            failures += 1
+        else:
+            print(f"  [通过] 平台判定 {platform} → 官方={got}")
+
+    parse_cases = {
+        "/mh 素材 妖辉石": "素材 妖辉石",
+        "mh 怪物 爵银龙": "怪物 爵银龙",
+        "@小机器人 /mh 肉质 爵银龙": "肉质 爵银龙",
+        "<@!123456> /mh 怪物 火龙": "怪物 火龙",
+        "／mh　素材　龙玉": "素材 龙玉",
+        "/mh": "",
+        "mh": "",
+    }
+    for raw, expected in parse_cases.items():
+        got = main.extract_argument(raw)
+        if got == expected:
+            print(f"  [通过] 解析 {raw!r} → {expected!r}")
+        else:
+            print(f"  [失败] 解析 {raw!r} → {got!r}（期望 {expected!r}）")
+            failures += 1
+
+    # 摘要降级不得超出官方平台的安全长度
+    card = cmd.dispatch(load_snapshot(), "怪物 爵银龙").card  # 拿一张真实卡片来生成摘要
+    summary = main.card_to_summary(card)
+    if len(summary) <= main.SUMMARY_MAX_CHARS:
+        print(f"  [通过] 摘要长度 {len(summary)} ≤ {main.SUMMARY_MAX_CHARS}")
+    else:
+        print(f"  [失败] 摘要长度 {len(summary)} > {main.SUMMARY_MAX_CHARS}")
+        failures += 1
+    if "图片发送失败" in summary:
+        print("  [通过] 摘要含降级提示")
+    else:
+        print("  [失败] 摘要缺少降级提示")
+        failures += 1
+
+    # 表格类分区（肉质）的内容在 section.data 里，不在 section.lines 里，
+    # 摘要必须能把表格摊成文本，否则只剩一个标题。
+    meat_card = cmd.dispatch(load_snapshot(), "肉质 爵银龙").card
+    meat_summary = main.card_to_summary(meat_card)
+    for token in ("斩", "打", "弹", "晕", "头部"):
+        if token in meat_summary:
+            print(f"  [通过] 肉质摘要含表格内容（{token}）")
+        else:
+            print(f"  [失败] 肉质摘要缺少表格内容（{token}）")
+            failures += 1
+    if "完整内容见" in meat_summary:
+        print("  [失败] 肉质摘要仍引导去 /mh help 看完整内容")
+        failures += 1
+    else:
+        print("  [通过] 肉质摘要不误导到 /mh help")
+
+    # 卡片缓存清理：在临时目录里造 50 张，剪枝后应只剩 40 张
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_dir = Path(tmp)
+        for index in range(50):
+            path = fake_dir / f"mh_fake_{index:03d}.png"
+            path.write_bytes(b"x")
+            # mtime 递增，保证「最近」有确定顺序
+            import os as _os
+
+            _os.utime(path, (1_700_000_000 + index, 1_700_000_000 + index))
+        original_dir = _render.CARD_CACHE_DIR
+        _render.CARD_CACHE_DIR = fake_dir
+        try:
+            _render._prune_card_files()
+        finally:
+            _render.CARD_CACHE_DIR = original_dir
+        left = len(list(fake_dir.glob("*.png")))
+        if left == _render.KEEP_CARD_FILES:
+            print(f"  [通过] 缓存剪枝保留 {left} 张")
+        else:
+            print(f"  [失败] 缓存剪枝后剩 {left} 张（期望 {_render.KEEP_CARD_FILES}）")
+            failures += 1
+
+    print()
+    return failures
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="mh_material 插件离线自测")
     parser.add_argument("--no-png", action="store_true", help="不生成卡片图片")
@@ -296,6 +407,8 @@ def main(argv=None) -> int:
                     print(f"  [失败] 缺少「{keyword}」")
                     failures += 1
         print()
+
+    failures += check_platform_layer()
 
     print(f"自测完成，异常/空结果 {failures} 项")
     return 1 if failures else 0

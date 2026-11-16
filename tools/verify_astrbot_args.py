@@ -189,6 +189,30 @@ def install_stubs() -> None:
     api_star = make_module("astrbot.api.star")
     api_star.Context = _Any
 
+    # main.py 用到的两个消息组件。这里给最小实现即可，
+    # 本脚本只关心参数解析与发送分支，不检查组件本身的行为。
+    api_components = make_module("astrbot.api.message_components")
+
+    class _Plain:
+        def __init__(self, text: str = "") -> None:
+            self.text = text
+
+    class _Image:
+        def __init__(self, file: str = "", path: str = "") -> None:
+            self.file = file
+            self.path = path
+
+        @staticmethod
+        def fromFileSystem(path: str):
+            return _Image(file=str(path), path=str(path))
+
+        @staticmethod
+        def fromURL(url: str):
+            return _Image(file=url)
+
+    api_components.Plain = _Plain
+    api_components.Image = _Image
+
     class _Star:
         def __init__(self, context=None, config=None):
             pass
@@ -333,6 +357,10 @@ def main(argv=None) -> int:
         "/mh help": "help",
         "/mh": "",
         "": "",
+        # 官方机器人：@ 残留、全角斜杠与全角空格
+        "@小机器人 /mh 肉质 爵银龙": "肉质 爵银龙",
+        "<@!123456> /mh 怪物 火龙": "怪物 火龙",
+        "／mh　素材　龙玉": "素材 龙玉",
     }
     for message, expected in cases.items():
         got = main_mod.extract_argument(message)

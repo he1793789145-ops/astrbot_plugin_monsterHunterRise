@@ -28,6 +28,7 @@ INCLUDE_FILES = (
     "metadata.yaml",
     "requirements.txt",
     "README.md",
+    "docs/qq_official_setup.md",
     "tools/extract.py",
     # `extract.py` 会 import 它（武器 / 装饰珠 / 反查索引），
     # 漏掉的话用户跑 rebuild_snapshot.py 会直接 ImportError。

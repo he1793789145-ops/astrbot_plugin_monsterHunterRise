@@ -4,9 +4,10 @@
 任务奖励，以及「这份素材能做什么武器 / 装饰珠」、武器详情与装饰珠配方，
 以图片卡片回复。
 
-面向 OneBot v11（aiocqhttp）平台，已在 AstrBot 4.x 上开发。
+同时支持 **OneBot v11（aiocqhttp）** 与 **QQ 官方机器人**（WebSocket / Webhook），
+已在 AstrBot 4.x 上开发。
 
-**当前版本：1.5.2**（改动见文末「版本更新记录」）
+**当前版本：1.6.0**（改动见文末「版本更新记录」）
 
 ## 指令
 
@@ -350,8 +351,19 @@ python tools/verify_astrbot_args.py --astrbot-dir "<AstrBot 源码目录>"
 ```
 
 它检查：handler 签名不依赖注解、真实 `CommandFilter` 能匹配指令、
-`extract_argument` 的各种消息形态、以及端到端 dispatch。
+`extract_argument` 的各种消息形态（含 `@` 残留与全角字符）、以及端到端 dispatch。
 改完 `main.py` 的指令处理建议跑一次。
+
+平台适配另有一个测试台（**只在源码仓库里，不随插件包发布**），
+不启动 AstrBot 也能跑：
+
+```
+python tools/platform_sim.py        # 加 -v 看每条回复的消息链
+```
+
+它验证三件事：两种平台的回复形态（OneBot 分两条、官方合并一条）、
+纯文本是否按预期关闭 Markdown、图片发不出去时的降级内容。
+若本机有 AstrBot 源码（`../_ab_src`），会用**真实的组件类**而不是替身。
 
 ## 导入约定（修改代码时注意）
 
@@ -433,13 +445,16 @@ astrbot_plugin_mh_material/
 ├── render.py        卡片渲染（PIL 主路径「公会台账」+ HTML 兼容后端）
 ├── metadata.yaml    插件元数据
 ├── requirements.txt 运行期依赖
+├── docs/
+│   └── qq_official_setup.md  QQ 官方机器人后台配置清单
 ├── tools/
 │   ├── extract.py           离线提取：源数据 → 紧凑快照（含采集点/傀异/部位细分/弱点/名字映射）
 │   ├── extract_equipment.py 离线提取：武器配方与详情、装饰珠、反查索引
 │   ├── fetch_habitats.py    抓取栖息地图并并入快照（缓存优先）
 │   ├── fetch_gathering.py   早期抓 Kiranico 采集点，已被游戏数据取代（不在管线中）
 │   ├── rebuild_snapshot.py  按正确顺序重建 + 数据完整性校验
-│   ├── selftest.py          离线自测（含回归断言）
+│   ├── selftest.py          离线自测（含回归断言、平台适配层检查）
+│   ├── platform_sim.py      平台适配测试台（假事件，验证两种平台的回复形态）
 │   └── verify_astrbot_args.py  AstrBot 指令解析回归测试
 ├── data/plugin_data/mh_material/
 │   ├── snapshot.json        快照（约 5.1 MB）
@@ -452,6 +467,30 @@ astrbot_plugin_mh_material/
 # 版本更新记录
 
 每次更新在这里追加一节，只写**与上一版相比变了什么**。
+
+## 1.6.0
+
+### 新增
+
+**支持 QQ 官方机器人** —— 插件现在能在 `qq_official`（WebSocket）与
+`qq_official_webhook` 两个适配器下工作，与 OneBot v11 并存，谁在跑就走谁：
+
+- 官方平台把**文本与图片合并成一条消息**发出。官方群聊对同一条消息的被动回复
+  有次数上限，分两条发等于双倍消耗，合并后回到一条。
+- 官方平台的纯文本回复**强制关闭 Markdown**，直接按 `msg_type=0` 发。
+- 图片发不出去时（渲染异常 / 文转图服务未配置）**降级为摘要文本**：标题 +
+  至多 2 个分区、每区至多 6 行、总长 ≤800 字，末尾注明是摘要。肉质这类表格分区
+  会被摊成「部位 斩46 打48 弹45｜火15 水0…」的紧凑文字。
+- 指令解析加固：自动剥掉消息开头残留的 `@昵称` 与 `<@!数字>`，全角空格与全角
+  斜杠 `／` 也会归一化。
+- `metadata.yaml` 的 `support_platforms` 增加上述两个平台名。
+- 新增 `tools/platform_sim.py`：不启动 AstrBot 也能验证两种平台的回复形态
+  （发送次数、是否合并、Markdown 开关、降级内容）。
+- 新增 `docs/qq_official_setup.md`：官方机器人后台的配置清单。
+
+### 修复
+
+卡片图片此前会无限累积在系统临时目录里。现在只保留最近 40 张，更早的自动清理。
 
 ## 1.5.2
 
